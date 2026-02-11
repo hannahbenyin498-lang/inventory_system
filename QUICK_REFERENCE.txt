@@ -1,0 +1,276 @@
+# CHRIS EFFECT Inventory System - Quick Reference Guide
+
+## 🚀 Quick Start
+
+### Step 1: Start the Server
+**Windows:**
+- Double-click `START.bat`
+- Or: `python app.py`
+
+**PowerShell:**
+```powershell
+powershell -ExecutionPolicy Bypass -File START.ps1
+```
+
+### Step 2: Open Browser
+Visit: `http://127.0.0.1:5000`
+
+### Step 3: Login
+- **Admin:** admin / admin
+- **User:** user / user
+
+---
+
+## 📊 Dashboard Overview
+
+### Stats Cards (Top Section)
+- **Total Items:** Total product count
+- **Low Stock:** Products below threshold
+- **Out of Stock:** Zero quantity items
+- **Total Value:** Inventory value calculation
+
+### Category Distribution
+Visual chart showing inventory by category
+
+### Recent Activity
+Latest sales and transactions
+
+---
+
+## 📦 Stock Management
+
+### Viewing Inventory
+- Click "Stock" tab at bottom
+- Table shows: SKU, Name, Qty, Price, Status
+
+### Adding Product
+1. Click blue "+" button (bottom right)
+2. Enter: SKU, Name, Quantity, Price
+3. Status auto-calculated based on quantity
+
+### Searching Products
+- Use search bar at top
+- Search by product name, SKU, or category
+- Results update in real-time
+
+### Editing Product
+1. Find product in stock table
+2. Click pencil icon
+3. Modify details
+4. Click save
+
+### Deleting Product (Admin Only)
+1. Find product in stock table
+2. Click trash icon
+3. Confirm deletion
+
+---
+
+## 💾 Import/Export
+
+### Export Inventory
+1. Go to Stock tab
+2. Click "Export" button
+3. CSV file downloads automatically
+4. File format: `inventory.csv`
+
+### Import Inventory
+1. Go to Stock tab
+2. Click "Import" button
+3. Select CSV file from computer
+4. System processes and updates inventory
+5. Shows: Imported, Updated, Invalid counts
+
+### CSV Format Required
+```
+id,sku,name,category,quantity,price,status,image
+1,SKU001,Product Name,Category,50,99.99,In Stock,
+```
+
+---
+
+## 🔐 User Roles
+
+### Admin User
+✓ View all inventory
+✓ Add products
+✓ Edit products
+✓ Delete products
+✓ View dashboard
+✓ Export/Import CSV
+✓ Access settings
+
+### Regular User
+✓ View inventory (read-only)
+✓ Search products
+✓ View dashboard
+✓ Export inventory
+✓ Record sales
+✗ Add/edit/delete products
+
+---
+
+## 📱 UI Sections
+
+### Header (Top)
+- Logo and title
+- Settings button
+- Logout button
+- User avatar
+
+### Navigation (Bottom)
+- Dashboard
+- Stock
+- Orders (coming soon)
+- Stats (coming soon)
+
+### FAB (Blue Button)
+- Quick add product
+- Shows when in Stock tab
+
+---
+
+## ⌨️ Common Tasks
+
+### Task: View All Low Stock Items
+1. Go to Dashboard
+2. Check "Low Stock" card
+3. Shows count of items below threshold
+
+### Task: Quickly Add Multiple Products
+1. Click FAB (+) button
+2. Enter first product details
+3. Repeat as needed
+
+### Task: Find Specific Product
+1. Use search bar
+2. Type product name or SKU
+3. Click Search
+4. Results displayed
+
+### Task: Record a Sale
+1. Find product in stock
+2. Click the product row
+3. Reduce quantity
+4. Save
+5. Sale auto-recorded
+
+### Task: Backup Inventory
+1. Click Export button
+2. Save CSV file
+3. Store safely
+4. Can re-import anytime
+
+---
+
+## 🎨 Status Indicators
+
+### Status Colors
+| Status | Color | Meaning |
+|--------|-------|---------|
+| In Stock | Green | Adequate quantity |
+| Low Stock | Yellow | Below threshold |
+| Out of Stock | Red | Zero quantity |
+
+---
+
+## 🔧 Keyboard Shortcuts
+
+Coming in future update:
+- `Ctrl+F` - Focus search
+- `Ctrl+N` - New product
+- `Ctrl+E` - Export CSV
+- `Ctrl+I` - Import CSV
+
+---
+
+## 📊 Data Files
+
+### store_inventory.db
+- SQLite database
+- Stores all products
+- Stores all sales
+- User credentials
+- Settings
+
+### images/ folder
+- Product images
+- Named by UUID
+- Auto-organized
+
+### Configuration
+- `app.py` - Main settings
+- `config.ini` - Custom settings
+
+---
+
+## 🐛 Troubleshooting
+
+### Product Not Showing?
+- Refresh page (F5)
+- Check search filters
+- Verify quantity > 0
+
+### Can't Login?
+- Verify username/password
+- Check caps lock
+- Try default credentials
+
+### Export not working?
+- Check browser settings
+- Disable pop-up blockers
+- Try different browser
+
+### Slow performance?
+- Close other browser tabs
+- Refresh page
+- Restart server
+
+---
+
+## 📞 Support
+
+**Quick Help:**
+1. Check browser console (F12)
+2. Look for error messages
+3. Restart server and try again
+
+**File Structure:**
+- `app.py` - Backend logic
+- `templates/index.html` - Frontend UI
+- `store_inventory.db` - Your data
+
+---
+
+## ✅ Features Checklist
+
+- [x] Dashboard with statistics
+- [x] Stock management (CRUD)
+- [x] Search functionality
+- [x] Import/Export CSV
+- [x] User authentication
+- [x] Admin/User roles
+- [x] Sales tracking
+- [x] Modern responsive UI
+- [x] Dark theme
+- [ ] Barcode scanning (coming)
+- [ ] Real-time sync (coming)
+- [ ] Advanced reporting (coming)
+
+---
+
+## 📈 Tips & Tricks
+
+1. **Bulk Updates:** Use CSV import for multiple changes
+2. **Quick Search:** Type first few letters of product name
+3. **Category Organization:** Use meaningful category names
+4. **Regular Exports:** Keep weekly backups of your inventory
+5. **Mobile Access:** Access from mobile browser on same network
+
+---
+
+**CHRIS EFFECT Inventory System**
+*Version 2.0 - Modern Web Edition*
+
+For complete documentation, see: `README.md`
+For migration details, see: `MIGRATION_GUIDE.txt`

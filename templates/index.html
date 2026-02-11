@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Inventory Dashboard - CHRIS EFFECT</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3b82f6",
+                        "navy-950": "#020617",
+                        "navy-900": "#0f172a",
+                        "navy-800": "#1e293b",
+                        "glass-white": "rgba(255, 255, 255, 0.03)",
+                        "glass-border": "rgba(255, 255, 255, 0.08)",
+                    },
+                    fontFamily: {
+                        "sans": ["'Plus Jakarta Sans'", "sans-serif"]
+                    },
+                },
+            },
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer base {
+            body {
+                @apply bg-navy-950 text-slate-100 antialiased selection:bg-primary/30;
+                font-family: 'Plus Jakarta Sans', sans-serif;
+            }
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .status-glow-red {
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+        }
+        .status-glow-emerald {
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+        }
+        .status-glow-blue {
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="app"></div>
+
+    <script>
+        // GLOBAL STATE
+        let currentView = 'dashboard';
+        let allProducts = [];
+        let roleUser = '';
+        let appDiv = null;
+        let api = {};
+
+        // API HELPER (Global scope)
+        api = {
+            async get(url) {
+                const res = await fetch(url, {
+                    headers: {'Authorization': localStorage.getItem('currentToken')}
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async post(url, data) {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': localStorage.getItem('currentToken')
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async put(url, data) {
+                const res = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': localStorage.getItem('currentToken')
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async delete(url) {
+                const res = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {'Authorization': localStorage.getItem('currentToken')}
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            }
+        };
+
+        // GLOBAL FUNCTIONS
+        function renderUI() {
+            let html = `
+            <header class="sticky top-0 z-50 bg-navy-950/80 backdrop-blur-xl border-b border-white/5">
+                <div class="flex items-center justify-between px-5 h-16">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20 text-primary border border-primary/20">
+                            <span class="material-symbols-outlined text-[22px]">inventory_2</span>
+                        </div>
+                        <div>
+                            <h1 class="text-base font-extrabold tracking-tight leading-none text-white">Inventory</h1>
+                            <p class="text-[11px] font-medium text-slate-400 mt-0.5">CHRIS EFFECT</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="currentView='settings'; renderUI()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined">settings</span>
+                        </button>
+                        <button onclick="logout()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined">logout</span>
+                        </button>
+                        <div class="h-9 w-9 rounded-full ring-2 ring-white/10 flex items-center justify-center bg-primary/20 text-primary text-sm font-bold">
+                            ${localStorage.getItem('currentUser').charAt(0).toUpperCase()}
+                        </div>
+                    </div>
+                </div>
+            </header>
+            `;
+
+            if (currentView === 'dashboard') {
+                html += getDashboardHTML();
+            } else if (currentView === 'stock') {
+                html += getStockHTML();
+            } else if (currentView === 'settings') {
+                html += getSettingsHTML();
+            }
+
+            html += `
+            <button onclick="showAddProductModal()" class="fixed right-6 bottom-28 h-14 w-14 rounded-2xl bg-primary text-white shadow-2xl shadow-primary/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-[60] border border-white/20">
+                <span class="material-symbols-outlined text-[28px]">add</span>
+            </button>
+            <nav class="fixed bottom-0 left-0 right-0 bg-navy-950/90 backdrop-blur-2xl border-t border-white/5 px-6 pt-3 pb-8 z-50">
+                <div class="flex items-center justify-center gap-8 max-w-md mx-auto">
+                    <a onclick="currentView='dashboard'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'dashboard' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">grid_view</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Dashboard</span>
+                    </a>
+                    <a onclick="currentView='stock'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'stock' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">inventory_2</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Stock</span>
+                    </a>
+                    <a onclick="alert('Orders - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">shopping_bag</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Orders</span>
+                    </a>
+                    <a onclick="alert('Analytics - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">analytics</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Stats</span>
+                    </a>
+                </div>
+            </nav>
+            `;
+
+            appDiv.innerHTML = html;
+            if (currentView === 'dashboard') {
+                loadDashboard();
+            } else if (currentView === 'stock') {
+                loadStock();
+            }
+        }
+
+        function getDashboardHTML() {
+            return `
+            <main class="pb-32">
+                <div class="px-5 pt-6 pb-2">
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-[20px]">search</span>
+                        <input id="searchInput" class="w-full bg-navy-900/50 border-white/10 rounded-2xl py-3.5 pl-11 pr-4 text-[13px] text-white placeholder:text-slate-500 focus:ring-primary/50 focus:border-primary/50 transition-all outline-none" placeholder="Search products, SKUs, suppliers..." type="text" onkeyup="handleSearch()"/>
+                    </div>
+                </div>
+                <section class="mt-4" id="statsSection"></section>
+                <section class="mt-10 px-5" id="analyticsSection"></section>
+                <section class="mt-10 px-5" id="activitiesSection"></section>
+            </main>
+            `;
+        }
+
+        function getStockHTML() {
+            return `
+            <main class="pb-32 px-5 pt-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-[20px] font-extrabold text-white">Stock Management</h2>
+                    <div class="flex gap-2">
+                        <button onclick="exportCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Export</button>
+                        <button onclick="importCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Import</button>
+                    </div>
+                </div>
+                <div class="glass-card rounded-2xl overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-navy-800/50 border-b border-white/5">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-slate-300 font-semibold">SKU</th>
+                                <th class="px-6 py-3 text-left text-slate-300 font-semibold">Name</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Qty</th>
+                                <th class="px-6 py-3 text-right text-slate-300 font-semibold">Price</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Status</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stockTable"></tbody>
+                    </table>
+                </div>
+            </main>
+            `;
+        }
+
+        function getSettingsHTML() {
+            return `
+            <main class="pb-32 px-5 pt-6 max-w-2xl mx-auto">
+                <h2 class="text-[20px] font-extrabold text-white mb-6">Settings</h2>
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-bold text-white mb-4">User Profile</h3>
+                    <div class="mb-6">
+                        <p class="text-slate-400">Username: <span class="text-white font-semibold">${localStorage.getItem('currentUser')}</span></p>
+                        <p class="text-slate-400">Role: <span class="text-white font-semibold">${localStorage.getItem('currentRole').toUpperCase()}</span></p>
+                    </div>
+                    <button onclick="logout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
+                </div>
+            </main>
+            `;
+        }
+
+        async function loadDashboard() {
+            try {
+                const dashboard = await api.get('/api/dashboard');
+                const section = document.getElementById('statsSection');
+                if (!section) return;
+
+                section.innerHTML = `<div class="flex gap-4 px-5 overflow-x-auto hide-scrollbar snap-x">
+                    <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 bg-gradient-to-br from-primary to-blue-700 text-white shadow-lg shadow-primary/20">
+                        <p class="text-[10px] font-extrabold opacity-70 uppercase tracking-[0.1em]">Total Items</p>
+                        <p class="text-3xl font-extrabold mt-1">${dashboard.total_products}</p>
+                        <div class="mt-4 flex items-center text-[11px] font-bold bg-white/20 w-fit px-2 py-1 rounded-lg">
+                            <span class="material-symbols-outlined text-[14px] mr-1">inventory_2</span> ${dashboard.total_quantity}
+                        </div>
+                    </div>
+                    <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+                                <span class="material-symbols-outlined text-[18px]">warning</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Low Stock</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.low_stock}</p>
+                    </div>
+                    <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-500">
+                                <span class="material-symbols-outlined text-[18px]">priority_high</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Out of Stock</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.out_of_stock}</p>
+                    </div>
+                    <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                                <span class="material-symbols-outlined text-[18px]">payments</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Total Value</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">$${dashboard.total_value.toLocaleString()}</p>
+                    </div>
+                </div>`;
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+            }
+        }
+
+        async function loadStock() {
+            try {
+                const products = await api.get('/api/inventory');
+                allProducts = products;
+                const table = document.getElementById('stockTable');
+                if (!table) return;
+
+                table.innerHTML = products.map(p => `
+                <tr class="border-b border-white/5 hover:bg-navy-800/30 transition">
+                    <td class="px-6 py-4 text-slate-300">${p.sku || '-'}</td>
+                    <td class="px-6 py-4 text-slate-300">${p.name}</td>
+                    <td class="px-6 py-4 text-center font-semibold">${p.quantity}</td>
+                    <td class="px-6 py-4 text-right font-semibold">$${p.price.toFixed(2)}</td>
+                    <td class="px-6 py-4 text-center">
+                        <span class="px-3 py-1 rounded-full text-xs font-bold ${p.status === 'In Stock' ? 'bg-emerald-500/20 text-emerald-400' : p.status === 'Low Stock' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}">
+                            ${p.status}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-center">
+                        <button onclick="editProduct(${p.id})" class="text-primary hover:opacity-70 transition mr-3">
+                            <span class="material-symbols-outlined text-[20px]">edit</span>
+                        </button>
+                        ${roleUser === 'admin' ? `<button onclick="deleteProduct(${p.id})" class="text-red-500 hover:opacity-70 transition">
+                            <span class="material-symbols-outlined text-[20px]">delete</span>
+                        </button>` : ''}
+                    </td>
+                </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading stock:', error);
+            }
+        }
+
+        function handleSearch() {
+            const term = document.getElementById('searchInput')?.value || '';
+            if (term.length > 2) {
+                api.get(`/api/inventory?search=${encodeURIComponent(term)}`).then(results => {
+                    allProducts = results;
+                    loadStock();
+                }).catch(e => console.error('Search error:', e));
+            }
+        }
+
+        function showAddProductModal() {
+            const sku = prompt('Enter SKU:');
+            if (!sku) return;
+            const name = prompt('Enter Product Name:');
+            if (!name) return;
+            const qty = parseInt(prompt('Enter Quantity:'));
+            if (isNaN(qty)) return;
+            const price = parseFloat(prompt('Enter Price:'));
+            if (isNaN(price)) return;
+
+            api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
+                alert('Product added!');
+                loadStock();
+            }).catch(e => alert('Error: ' + e.message));
+        }
+
+        function editProduct(id) {
+            const p = allProducts.find(x => x.id === id);
+            if (!p) return;
+            const name = prompt('Edit name:', p.name);
+            if (!name) return;
+            const qty = parseInt(prompt('Edit quantity:', p.quantity));
+            if (isNaN(qty)) return;
+            const price = parseFloat(prompt('Edit price:', p.price));
+            if (isNaN(price)) return;
+
+            api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
+                alert('Product updated!');
+                loadStock();
+            }).catch(e => alert('Error: ' + e.message));
+        }
+
+        async function deleteProduct(id) {
+            if (confirm('Delete this product?')) {
+                try {
+                    await api.delete(`/api/inventory/${id}`);
+                    alert('Product deleted!');
+                    loadStock();
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+        }
+
+        async function exportCSV() {
+            try {
+                const response = await fetch('/api/export-csv', {
+                    headers: {'Authorization': localStorage.getItem('currentToken')}
+                });
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'inventory.csv';
+                a.click();
+            } catch (error) {
+                alert('Export failed: ' + error.message);
+            }
+        }
+
+        function importCSV() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                const formData = new FormData();
+                formData.append('file', file);
+                try {
+                    const res = await fetch('/api/import-csv', {
+                        method: 'POST',
+                        headers: {'Authorization': localStorage.getItem('currentToken')},
+                        body: formData
+                    });
+                    const data = await res.json();
+                    alert(`Imported: ${data.imported}, Updated: ${data.updated}, Invalid: ${data.invalid}`);
+                    loadStock();
+                } catch (error) {
+                    alert('Import failed: ' + error.message);
+                }
+            };
+            input.click();
+        }
+
+        function logout() {
+            localStorage.clear();
+            location.reload();
+        }
+
+        // AUTHENTICATION CHECK AND INITIALIZATION
+        const currentUser = localStorage.getItem('currentUser');
+        const currentToken = localStorage.getItem('currentToken');
+        
+        if (!currentUser || !currentToken) {
+            // Show login page
+            showLoginPage();
+        } else {
+            // Initialize main app
+            roleUser = localStorage.getItem('currentRole');
+            appDiv = document.getElementById('app');
+            renderUI();
+            loadDashboard();
+        }
+
+        function showLoginPage() {
+            document.body.innerHTML = `
+            <div class="flex items-center justify-center min-h-screen bg-navy-950">
+                <div class="w-full max-w-md mx-auto px-6">
+                    <div class="mb-12 text-center">
+                        <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/20 text-primary border border-primary/20 mx-auto mb-4">
+                            <span class="material-symbols-outlined text-[28px]">inventory_2</span>
+                        </div>
+                        <h1 class="text-2xl font-extrabold text-white">CHRIS EFFECT</h1>
+                        <p class="text-slate-400 mt-2">Inventory System</p>
+                    </div>
+                    <div class="glass-card rounded-3xl p-8">
+                        <h2 class="text-xl font-bold text-white mb-6">Welcome Back</h2>
+                        <form id="loginForm">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Username</label>
+                                <input type="text" id="username" placeholder="Enter username" class="w-full px-4 py-2 bg-navy-900/50 border border-white/10 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50">
+                            </div>
+                            <div class="mb-6">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Password</label>
+                                <input type="password" id="password" placeholder="Enter password" class="w-full px-4 py-2 bg-navy-900/50 border border-white/10 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50">
+                            </div>
+                            <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all">LOG IN</button>
+                        </form>
+                        <div class="mt-6 pt-6 border-t border-white/10">
+                            <p class="text-xs text-slate-400 text-center mb-3">Default Credentials:</p>
+                            <p class="text-xs text-slate-400 text-center mb-1">Admin: <span class="text-slate-300">admin / admin</span></p>
+                            <p class="text-xs text-slate-400 text-center">User: <span class="text-slate-300">user / user</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+
+                try {
+                    const response = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({username, password})
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        localStorage.setItem('currentUser', data.username);
+                        localStorage.setItem('currentToken', data.token);
+                        localStorage.setItem('currentRole', data.role);
+                        location.reload();
+                    } else {
+                        alert('Invalid credentials');
+                    }
+                } catch (error) {
+                    alert('Login failed: ' + error.message);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async post(url, data) {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': localStorage.getItem('currentToken')
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async put(url, data) {
+                const res = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': localStorage.getItem('currentToken')
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            },
+            async delete(url) {
+                const res = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {'Authorization': localStorage.getItem('currentToken')}
+                });
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            }
+        };
+
+        // Global functions
+        function renderUI() {
+            let html = `
+            <header class="sticky top-0 z-50 bg-navy-950/80 backdrop-blur-xl border-b border-white/5">
+                <div class="flex items-center justify-between px-5 h-16">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20 text-primary border border-primary/20">
+                            <span class="material-symbols-outlined text-[22px]">inventory_2</span>
+                        </div>
+                        <div>
+                            <h1 class="text-base font-extrabold tracking-tight leading-none text-white">Inventory</h1>
+                            <p class="text-[11px] font-medium text-slate-400 mt-0.5">CHRIS EFFECT</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="currentView='settings'; renderUI()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined">settings</span>
+                        </button>
+                        <button onclick="logout()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined">logout</span>
+                        </button>
+                        <div class="h-9 w-9 rounded-full ring-2 ring-white/10 flex items-center justify-center bg-primary/20 text-primary text-sm font-bold">
+                            ${localStorage.getItem('currentUser').charAt(0).toUpperCase()}
+                        </div>
+                    </div>
+                </div>
+            </header>
+            `;
+
+            if (currentView === 'dashboard') {
+                html += getDashboardHTML();
+            } else if (currentView === 'stock') {
+                html += getStockHTML();
+            } else if (currentView === 'settings') {
+                html += getSettingsHTML();
+            }
+
+            html += `
+            <button onclick="showAddProductModal()" class="fixed right-6 bottom-28 h-14 w-14 rounded-2xl bg-primary text-white shadow-2xl shadow-primary/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-[60] border border-white/20">
+                <span class="material-symbols-outlined text-[28px]">add</span>
+            </button>
+            <nav class="fixed bottom-0 left-0 right-0 bg-navy-950/90 backdrop-blur-2xl border-t border-white/5 px-6 pt-3 pb-8 z-50">
+                <div class="flex items-center justify-center gap-8 max-w-md mx-auto">
+                    <a onclick="currentView='dashboard'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'dashboard' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">grid_view</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Dashboard</span>
+                    </a>
+                    <a onclick="currentView='stock'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'stock' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">inventory_2</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Stock</span>
+                    </a>
+                    <a onclick="alert('Orders - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">shopping_bag</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Orders</span>
+                    </a>
+                    <a onclick="alert('Analytics - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">analytics</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Stats</span>
+                    </a>
+                </div>
+            </nav>
+            `;
+
+            appDiv.innerHTML = html;
+            if (currentView === 'dashboard') {
+                loadDashboard();
+            } else if (currentView === 'stock') {
+                loadStock();
+            }
+        }
+
+        function getDashboardHTML() {
+            return `
+            <main class="pb-32">
+                <div class="px-5 pt-6 pb-2">
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-[20px]">search</span>
+                        <input id="searchInput" class="w-full bg-navy-900/50 border-white/10 rounded-2xl py-3.5 pl-11 pr-4 text-[13px] text-white placeholder:text-slate-500 focus:ring-primary/50 focus:border-primary/50 transition-all outline-none" placeholder="Search products, SKUs, suppliers..." type="text" onkeyup="handleSearch()"/>
+                    </div>
+                </div>
+                <section class="mt-4" id="statsSection"><!-- Stats will be rendered here --></section>
+                <section class="mt-10 px-5" id="analyticsSection"><!-- Analytics will be rendered here --></section>
+                <section class="mt-10 px-5" id="activitiesSection"><!-- Activities will be rendered here --></section>
+            </main>
+            `;
+        }
+
+        function getStockHTML() {
+            return `
+            <main class="pb-32 px-5 pt-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-[20px] font-extrabold text-white">Stock Management</h2>
+                    <div class="flex gap-2">
+                        <button onclick="exportCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Export</button>
+                        <button onclick="importCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Import</button>
+                    </div>
+                </div>
+                <div class="glass-card rounded-2xl overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-navy-800/50 border-b border-white/5">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-slate-300 font-semibold">SKU</th>
+                                <th class="px-6 py-3 text-left text-slate-300 font-semibold">Name</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Qty</th>
+                                <th class="px-6 py-3 text-right text-slate-300 font-semibold">Price</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Status</th>
+                                <th class="px-6 py-3 text-center text-slate-300 font-semibold">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stockTable"><!-- Products will be rendered here --></tbody>
+                    </table>
+                </div>
+            </main>
+            `;
+        }
+
+        function getSettingsHTML() {
+            return `
+            <main class="pb-32 px-5 pt-6 max-w-2xl mx-auto">
+                <h2 class="text-[20px] font-extrabold text-white mb-6">Settings</h2>
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-bold text-white mb-4">User Profile</h3>
+                    <div class="mb-6">
+                        <p class="text-slate-400">Username: <span class="text-white font-semibold">${localStorage.getItem('currentUser')}</span></p>
+                        <p class="text-slate-400">Role: <span class="text-white font-semibold">${localStorage.getItem('currentRole').toUpperCase()}</span></p>
+                    </div>
+                    <button onclick="logout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
+                </div>
+            </main>
+            `;
+        }
+
+        async function loadDashboard() {
+            try {
+                const dashboard = await api.get('/api/dashboard');
+                const section = document.getElementById('statsSection');
+                if (!section) return;
+
+                section.innerHTML = `
+                <div class="flex gap-4 px-5 overflow-x-auto hide-scrollbar snap-x">
+                    <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 bg-gradient-to-br from-primary to-blue-700 text-white shadow-lg shadow-primary/20">
+                        <p class="text-[10px] font-extrabold opacity-70 uppercase tracking-[0.1em]">Total Items</p>
+                        <p class="text-3xl font-extrabold mt-1">${dashboard.total_products}</p>
+                        <div class="mt-4 flex items-center text-[11px] font-bold bg-white/20 w-fit px-2 py-1 rounded-lg">
+                            <span class="material-symbols-outlined text-[14px] mr-1">inventory_2</span> ${dashboard.total_quantity}
+                        </div>
+                    </div>
+                    <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+                                <span class="material-symbols-outlined text-[18px]">warning</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Low Stock</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.low_stock}</p>
+                    </div>
+                    <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-500">
+                                <span class="material-symbols-outlined text-[18px]">priority_high</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Out of Stock</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.out_of_stock}</p>
+                    </div>
+                    <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 glass-card">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                                <span class="material-symbols-outlined text-[18px]">payments</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase">Total Value</p>
+                        <p class="text-2xl font-extrabold mt-1 text-white">$${dashboard.total_value.toLocaleString()}</p>
+                    </div>
+                </div>
+                `;
+
+                const analyticsSection = document.getElementById('analyticsSection');
+                if (analyticsSection && dashboard.categories.length > 0) {
+                    analyticsSection.innerHTML = `
+                    <div class="flex items-end justify-between mb-5">
+                        <div>
+                            <h2 class="text-[17px] font-extrabold tracking-tight text-white">Stock by Category</h2>
+                            <p class="text-[11px] text-slate-400 font-medium">Top categories by quantity</p>
+                        </div>
+                    </div>
+                    <div class="glass-card rounded-3xl p-6">
+                        <div class="grid grid-cols-5 gap-4 items-end h-32">
+                            ${dashboard.categories.map((cat, idx) => {
+                                const maxQty = Math.max(...dashboard.categories.map(c => c.qty));
+                                const height = maxQty > 0 ? (cat.qty / maxQty * 100) : 0;
+                                return `
+                                <div class="flex flex-col items-center gap-3">
+                                    <div class="w-full bg-slate-800 rounded-lg relative h-full flex flex-col justify-end overflow-hidden">
+                                        <div class="w-full bg-primary/60 rounded-t-lg" style="height: ${height}%;"></div>
+                                    </div>
+                                    <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">${cat.name.substring(0, 4)}</span>
+                                </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                    `;
+                }
+
+                const activitiesSection = document.getElementById('activitiesSection');
+                if (activitiesSection && dashboard.recent_sales.length > 0) {
+                    activitiesSection.innerHTML = `
+                    <div class="flex items-center justify-between mb-5">
+                        <h2 class="text-[17px] font-extrabold tracking-tight text-white">Recent Activity</h2>
+                    </div>
+                    <div class="space-y-3">
+                        ${dashboard.recent_sales.slice(0, 5).map(sale => `
+                        <div class="flex items-center gap-4 p-4 rounded-2xl glass-card">
+                            <div class="h-11 w-11 shrink-0 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-[20px]">add_shopping_cart</span>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-[13px] font-bold text-white truncate">${sale.name}</p>
+                                <p class="text-[11px] text-slate-400 mt-0.5">Sold <span class="text-emerald-400 font-bold">${sale.quantity} units</span></p>
+                            </div>
+                            <div class="text-right shrink-0">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase">Recent</p>
+                                <p class="text-[13px] font-extrabold text-white mt-0.5">$${(sale.price * sale.quantity).toFixed(2)}</p>
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+            }
+        }
+
+        async function loadStock() {
+            try {
+                const products = await api.get('/api/inventory');
+                allProducts = products;
+                const table = document.getElementById('stockTable');
+                if (!table) return;
+
+                table.innerHTML = products.map(p => `
+                <tr class="border-b border-white/5 hover:bg-navy-800/30 transition">
+                    <td class="px-6 py-4 text-slate-300">${p.sku || '-'}</td>
+                    <td class="px-6 py-4 text-slate-300">${p.name}</td>
+                    <td class="px-6 py-4 text-center font-semibold">${p.quantity}</td>
+                    <td class="px-6 py-4 text-right font-semibold">$${p.price.toFixed(2)}</td>
+                    <td class="px-6 py-4 text-center">
+                        <span class="px-3 py-1 rounded-full text-xs font-bold ${p.status === 'In Stock' ? 'bg-emerald-500/20 text-emerald-400' : p.status === 'Low Stock' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}">
+                            ${p.status}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-center">
+                        <button onclick="editProduct(${p.id})" class="text-primary hover:opacity-70 transition mr-3">
+                            <span class="material-symbols-outlined text-[20px]">edit</span>
+                        </button>
+                        ${roleUser === 'admin' ? `<button onclick="deleteProduct(${p.id})" class="text-red-500 hover:opacity-70 transition">
+                            <span class="material-symbols-outlined text-[20px]">delete</span>
+                        </button>` : ''}
+                    </td>
+                </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading stock:', error);
+            }
+        }
+
+        function handleSearch() {
+            const term = document.getElementById('searchInput')?.value || '';
+            if (term.length > 0) {
+                api.get(`/api/inventory?search=${encodeURIComponent(term)}`).then(results => {
+                    allProducts = results;
+                }).catch(e => console.error('Search error:', e));
+            }
+        }
+
+        function showAddProductModal() {
+            const sku = prompt('Enter SKU:');
+            if (!sku) return;
+            const name = prompt('Enter Product Name:');
+            if (!name) return;
+            const qty = parseInt(prompt('Enter Quantity:'));
+            if (isNaN(qty)) return;
+            const price = parseFloat(prompt('Enter Price:'));
+            if (isNaN(price)) return;
+
+            api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
+                alert('Product added!');
+                loadStock();
+            }).catch(e => alert('Error: ' + e.message));
+        }
+
+        function editProduct(id) {
+            const p = allProducts.find(x => x.id === id);
+            if (!p) return;
+            const name = prompt('Edit name:', p.name);
+            if (!name) return;
+            const qty = parseInt(prompt('Edit quantity:', p.quantity));
+            if (isNaN(qty)) return;
+            const price = parseFloat(prompt('Edit price:', p.price));
+            if (isNaN(price)) return;
+
+            api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
+                alert('Product updated!');
+                loadStock();
+            }).catch(e => alert('Error: ' + e.message));
+        }
+
+        async function deleteProduct(id) {
+            if (confirm('Delete this product?')) {
+                try {
+                    await api.delete(`/api/inventory/${id}`);
+                    alert('Product deleted!');
+                    loadStock();
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+        }
+
+        async function exportCSV() {
+            try {
+                const response = await fetch('/api/export-csv', {
+                    headers: {'Authorization': localStorage.getItem('currentToken')}
+                });
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'inventory.csv';
+                a.click();
+            } catch (error) {
+                alert('Export failed: ' + error.message);
+            }
+        }
+
+        function importCSV() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                const formData = new FormData();
+                formData.append('file', file);
+                try {
+                    const res = await fetch('/api/import-csv', {
+                        method: 'POST',
+                        headers: {'Authorization': localStorage.getItem('currentToken')},
+                        body: formData
+                    });
+                    const data = await res.json();
+                    alert(`Imported: ${data.imported}, Updated: ${data.updated}, Invalid: ${data.invalid}`);
+                    loadStock();
+                } catch (error) {
+                    alert('Import failed: ' + error.message);
+                }
+            };
+            input.click();
+        }
+
+        function logout() {
+            localStorage.clear();
+            location.reload();
+        }
+
+        // Initialize app when DOM is ready
+        if (localStorage.getItem('currentUser') && localStorage.getItem('currentToken')) {
+            document.addEventListener('DOMContentLoaded', renderUI);
+        }
+    </script>
+            // Show login page
+            document.body.innerHTML = `
+            <div class="flex items-center justify-center min-h-screen bg-navy-950">
+                <div class="w-full max-w-md mx-auto px-6">
+                    <div class="mb-12 text-center">
+                        <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/20 text-primary border border-primary/20 mx-auto mb-4">
+                            <span class="material-symbols-outlined text-[28px]">inventory_2</span>
+                        </div>
+                        <h1 class="text-2xl font-extrabold text-white">CHRIS EFFECT</h1>
+                        <p class="text-slate-400 mt-2">Inventory System</p>
+                    </div>
+                    <div class="glass-card rounded-3xl p-8">
+                        <h2 class="text-xl font-bold text-white mb-6">Welcome Back</h2>
+                        <form id="loginForm">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Username</label>
+                                <input type="text" id="username" placeholder="Enter username" class="w-full px-4 py-2 bg-navy-900/50 border border-white/10 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50">
+                            </div>
+                            <div class="mb-6">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Password</label>
+                                <input type="password" id="password" placeholder="Enter password" class="w-full px-4 py-2 bg-navy-900/50 border border-white/10 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50">
+                            </div>
+                            <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all">LOG IN</button>
+                        </form>
+                        <div class="mt-6 pt-6 border-t border-white/10">
+                            <p class="text-xs text-slate-400 text-center mb-3">Default Credentials:</p>
+                            <p class="text-xs text-slate-400 text-center mb-1">Admin: <span class="text-slate-300">admin / admin</span></p>
+                            <p class="text-xs text-slate-400 text-center">User: <span class="text-slate-300">user / user</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+
+                try {
+                    const response = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({username, password})
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        localStorage.setItem('currentUser', data.username);
+                        localStorage.setItem('currentToken', data.token);
+                        localStorage.setItem('currentRole', data.role);
+                        location.reload();
+                    } else {
+                        alert('Invalid credentials');
+                    }
+                } catch (error) {
+                    alert('Login failed: ' + error.message);
+                }
+            });
+        } else {
+            // Global app state
+            let currentView = 'dashboard';
+            let allProducts = [];
+            const role = localStorage.getItem('currentRole');
+            const app = document.getElementById('app');
+            
+            // Load main app
+            document.addEventListener('DOMContentLoaded', initApp);
+
+            async function initApp() {
+
+                // Functions
+                const api = {
+                    async get(url) {
+                        const res = await fetch(url, {
+                            headers: {'Authorization': localStorage.getItem('currentToken')}
+                        });
+                        if (!res.ok) throw new Error('API error');
+                        return res.json();
+                    },
+                    async post(url, data) {
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': localStorage.getItem('currentToken')
+                            },
+                            body: JSON.stringify(data)
+                        });
+                        if (!res.ok) throw new Error('API error');
+                        return res.json();
+                    },
+                    async put(url, data) {
+                        const res = await fetch(url, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': localStorage.getItem('currentToken')
+                            },
+                            body: JSON.stringify(data)
+                        });
+                        if (!res.ok) throw new Error('API error');
+                        return res.json();
+                    },
+                    async delete(url) {
+                        const res = await fetch(url, {
+                            method: 'DELETE',
+                            headers: {'Authorization': localStorage.getItem('currentToken')}
+                        });
+                        if (!res.ok) throw new Error('API error');
+                        return res.json();
+                    }
+                };
+
+                function renderUI() {
+                    let html = `
+                    <header class="sticky top-0 z-50 bg-navy-950/80 backdrop-blur-xl border-b border-white/5">
+                        <div class="flex items-center justify-between px-5 h-16">
+                            <div class="flex items-center gap-3">
+                                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20 text-primary border border-primary/20">
+                                    <span class="material-symbols-outlined text-[22px]">inventory_2</span>
+                                </div>
+                                <div>
+                                    <h1 class="text-base font-extrabold tracking-tight leading-none text-white">Inventory</h1>
+                                    <p class="text-[11px] font-medium text-slate-400 mt-0.5">CHRIS EFFECT</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button onclick="currentView='settings'; renderUI()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                                    <span class="material-symbols-outlined">settings</span>
+                                </button>
+                                <button onclick="logout()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                                    <span class="material-symbols-outlined">logout</span>
+                                </button>
+                                <div class="h-9 w-9 rounded-full ring-2 ring-white/10 flex items-center justify-center bg-primary/20 text-primary text-sm font-bold">
+                                    ${localStorage.getItem('currentUser').charAt(0).toUpperCase()}
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+                    `;
+
+                    if (currentView === 'dashboard') {
+                        html += getDashboardHTML();
+                    } else if (currentView === 'stock') {
+                        html += getStockHTML();
+                    } else if (currentView === 'settings') {
+                        html += getSettingsHTML();
+                    }
+
+                    html += `
+                    <button onclick="showAddProductModal()" class="fixed right-6 bottom-28 h-14 w-14 rounded-2xl bg-primary text-white shadow-2xl shadow-primary/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-[60] border border-white/20">
+                        <span class="material-symbols-outlined text-[28px]">add</span>
+                    </button>
+                    <nav class="fixed bottom-0 left-0 right-0 bg-navy-950/90 backdrop-blur-2xl border-t border-white/5 px-6 pt-3 pb-8 z-50">
+                        <div class="flex items-center justify-center gap-8 max-w-md mx-auto">
+                            <a onclick="currentView='dashboard'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'dashboard' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                                <span class="material-symbols-outlined text-[24px]">grid_view</span>
+                                <span class="text-[9px] font-extrabold uppercase tracking-widest">Dashboard</span>
+                            </a>
+                            <a onclick="currentView='stock'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'stock' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                                <span class="material-symbols-outlined text-[24px]">inventory_2</span>
+                                <span class="text-[9px] font-extrabold uppercase tracking-widest">Stock</span>
+                            </a>
+                            <a onclick="alert('Orders - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                                <span class="material-symbols-outlined text-[24px]">shopping_bag</span>
+                                <span class="text-[9px] font-extrabold uppercase tracking-widest">Orders</span>
+                            </a>
+                            <a onclick="alert('Analytics - Coming Soon')" class="flex flex-col items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer">
+                                <span class="material-symbols-outlined text-[24px]">analytics</span>
+                                <span class="text-[9px] font-extrabold uppercase tracking-widest">Stats</span>
+                            </a>
+                        </div>
+                    </nav>
+                    `;
+
+                    app.innerHTML = html;
+                }
+
+                function getDashboardHTML() {
+                    return `
+                    <main class="pb-32">
+                        <div class="px-5 pt-6 pb-2">
+                            <div class="relative">
+                                <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-[20px]">search</span>
+                                <input id="searchInput" class="w-full bg-navy-900/50 border-white/10 rounded-2xl py-3.5 pl-11 pr-4 text-[13px] text-white placeholder:text-slate-500 focus:ring-primary/50 focus:border-primary/50 transition-all outline-none" placeholder="Search products, SKUs, suppliers..." type="text" onkeyup="handleSearch()"/>
+                            </div>
+                        </div>
+                        <section class="mt-4" id="statsSection">
+                            <!-- Stats will be rendered here -->
+                        </section>
+                        <section class="mt-10 px-5" id="analyticsSection">
+                            <!-- Analytics will be rendered here -->
+                        </section>
+                        <section class="mt-10 px-5" id="activitiesSection">
+                            <!-- Activities will be rendered here -->
+                        </section>
+                    </main>
+                    `;
+                }
+
+                function getStockHTML() {
+                    return `
+                    <main class="pb-32 px-5 pt-6">
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-[20px] font-extrabold text-white">Stock Management</h2>
+                            <div class="flex gap-2">
+                                <button onclick="exportCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Export</button>
+                                <button onclick="importCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Import</button>
+                            </div>
+                        </div>
+                        <div class="glass-card rounded-2xl overflow-hidden">
+                            <table class="w-full text-sm">
+                                <thead class="bg-navy-800/50 border-b border-white/5">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-slate-300 font-semibold">SKU</th>
+                                        <th class="px-6 py-3 text-left text-slate-300 font-semibold">Name</th>
+                                        <th class="px-6 py-3 text-center text-slate-300 font-semibold">Qty</th>
+                                        <th class="px-6 py-3 text-right text-slate-300 font-semibold">Price</th>
+                                        <th class="px-6 py-3 text-center text-slate-300 font-semibold">Status</th>
+                                        <th class="px-6 py-3 text-center text-slate-300 font-semibold">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="stockTable">
+                                    <!-- Products will be rendered here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </main>
+                    `;
+                }
+
+                function getSettingsHTML() {
+                    return `
+                    <main class="pb-32 px-5 pt-6 max-w-2xl mx-auto">
+                        <h2 class="text-[20px] font-extrabold text-white mb-6">Settings</h2>
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-lg font-bold text-white mb-4">User Profile</h3>
+                            <div class="mb-6">
+                                <p class="text-slate-400">Username: <span class="text-white font-semibold">${localStorage.getItem('currentUser')}</span></p>
+                                <p class="text-slate-400">Role: <span class="text-white font-semibold">${localStorage.getItem('currentRole').toUpperCase()}</span></p>
+                            </div>
+                            <button onclick="logout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
+                        </div>
+                    </main>
+                    `;
+                }
+
+                async function loadDashboard() {
+                    try {
+                        const dashboard = await api.get('/api/dashboard');
+                        const section = document.getElementById('statsSection');
+                        if (!section) return;
+
+                        section.innerHTML = `
+                        <div class="flex gap-4 px-5 overflow-x-auto hide-scrollbar snap-x">
+                            <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 bg-gradient-to-br from-primary to-blue-700 text-white shadow-lg shadow-primary/20">
+                                <p class="text-[10px] font-extrabold opacity-70 uppercase tracking-[0.1em]">Total Items</p>
+                                <p class="text-3xl font-extrabold mt-1">${dashboard.total_products}</p>
+                                <div class="mt-4 flex items-center text-[11px] font-bold bg-white/20 w-fit px-2 py-1 rounded-lg">
+                                    <span class="material-symbols-outlined text-[14px] mr-1">inventory_2</span> ${dashboard.total_quantity}
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+                                        <span class="material-symbols-outlined text-[18px]">warning</span>
+                                    </div>
+                                </div>
+                                <p class="text-[10px] font-bold text-slate-500 uppercase">Low Stock</p>
+                                <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.low_stock}</p>
+                            </div>
+                            <div class="flex-shrink-0 w-[160px] snap-start rounded-2xl p-5 glass-card">
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="h-8 w-8 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-500">
+                                        <span class="material-symbols-outlined text-[18px]">priority_high</span>
+                                    </div>
+                                </div>
+                                <p class="text-[10px] font-bold text-slate-500 uppercase">Out of Stock</p>
+                                <p class="text-2xl font-extrabold mt-1 text-white">${dashboard.out_of_stock}</p>
+                            </div>
+                            <div class="flex-shrink-0 w-[180px] snap-start rounded-2xl p-5 glass-card">
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                                        <span class="material-symbols-outlined text-[18px]">payments</span>
+                                    </div>
+                                </div>
+                                <p class="text-[10px] font-bold text-slate-500 uppercase">Total Value</p>
+                                <p class="text-2xl font-extrabold mt-1 text-white">$${dashboard.total_value.toLocaleString()}</p>
+                            </div>
+                        </div>
+                        `;
+
+                        // Analytics section
+                        const analyticsSection = document.getElementById('analyticsSection');
+                        if (analyticsSection && dashboard.categories.length > 0) {
+                            analyticsSection.innerHTML = `
+                            <div class="flex items-end justify-between mb-5">
+                                <div>
+                                    <h2 class="text-[17px] font-extrabold tracking-tight text-white">Stock by Category</h2>
+                                    <p class="text-[11px] text-slate-400 font-medium">Top categories by quantity</p>
+                                </div>
+                            </div>
+                            <div class="glass-card rounded-3xl p-6">
+                                <div class="grid grid-cols-5 gap-4 items-end h-32">
+                                    ${dashboard.categories.map((cat, idx) => {
+                                        const maxQty = Math.max(...dashboard.categories.map(c => c.qty));
+                                        const height = maxQty > 0 ? (cat.qty / maxQty * 100) : 0;
+                                        return `
+                                        <div class="flex flex-col items-center gap-3">
+                                            <div class="w-full bg-slate-800 rounded-lg relative h-full flex flex-col justify-end overflow-hidden">
+                                                <div class="w-full bg-primary/60 rounded-t-lg" style="height: ${height}%;"></div>
+                                            </div>
+                                            <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">${cat.name.substring(0, 4)}</span>
+                                        </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                            `;
+                        }
+
+                        // Activities section
+                        const activitiesSection = document.getElementById('activitiesSection');
+                        if (activitiesSection && dashboard.recent_sales.length > 0) {
+                            activitiesSection.innerHTML = `
+                            <div class="flex items-center justify-between mb-5">
+                                <h2 class="text-[17px] font-extrabold tracking-tight text-white">Recent Activity</h2>
+                            </div>
+                            <div class="space-y-3">
+                                ${dashboard.recent_sales.slice(0, 5).map(sale => `
+                                <div class="flex items-center gap-4 p-4 rounded-2xl glass-card">
+                                    <div class="h-11 w-11 shrink-0 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-[20px]">add_shopping_cart</span>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-[13px] font-bold text-white truncate">${sale.name}</p>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Sold <span class="text-emerald-400 font-bold">${sale.quantity} units</span></p>
+                                    </div>
+                                    <div class="text-right shrink-0">
+                                        <p class="text-[10px] font-bold text-slate-500 uppercase">Recent</p>
+                                        <p class="text-[13px] font-extrabold text-white mt-0.5">$${(sale.price * sale.quantity).toFixed(2)}</p>
+                                    </div>
+                                </div>
+                                `).join('')}
+                            </div>
+                            `;
+                        }
+                    } catch (error) {
+                        console.error('Error loading dashboard:', error);
+                    }
+                }
+
+                async function loadStock() {
+                    try {
+                        const products = await api.get('/api/inventory');
+                        allProducts = products;
+                        const table = document.getElementById('stockTable');
+                        if (!table) return;
+
+                        table.innerHTML = products.map(p => `
+                        <tr class="border-b border-white/5 hover:bg-navy-800/30 transition">
+                            <td class="px-6 py-4 text-slate-300">${p.sku || '-'}</td>
+                            <td class="px-6 py-4 text-slate-300">${p.name}</td>
+                            <td class="px-6 py-4 text-center font-semibold">${p.quantity}</td>
+                            <td class="px-6 py-4 text-right font-semibold">$${p.price.toFixed(2)}</td>
+                            <td class="px-6 py-4 text-center">
+                                <span class="px-3 py-1 rounded-full text-xs font-bold ${p.status === 'In Stock' ? 'bg-emerald-500/20 text-emerald-400' : p.status === 'Low Stock' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}">
+                                    ${p.status}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-center">
+                                <button onclick="editProduct(${p.id})" class="text-primary hover:opacity-70 transition mr-3">
+                                    <span class="material-symbols-outlined text-[20px]">edit</span>
+                                </button>
+                                ${role === 'admin' ? `<button onclick="deleteProduct(${p.id})" class="text-red-500 hover:opacity-70 transition">
+                                    <span class="material-symbols-outlined text-[20px]">delete</span>
+                                </button>` : ''}
+                            </td>
+                        </tr>
+                        `).join('');
+                    } catch (error) {
+                        console.error('Error loading stock:', error);
+                    }
+                }
+
+                async function handleSearch() {
+                    const term = document.getElementById('searchInput')?.value || '';
+                    if (term.length > 0) {
+                        try {
+                            const results = await api.get(`/api/inventory?search=${encodeURIComponent(term)}`);
+                            allProducts = results;
+                        } catch (error) {
+                            console.error('Search error:', error);
+                        }
+                    } else {
+                        try {
+                            const products = await api.get('/api/inventory');
+                            allProducts = products;
+                        } catch (error) {
+                            console.error('Error loading products:', error);
+                        }
+                    }
+                }
+
+                function showAddProductModal() {
+                    const sku = prompt('Enter SKU:');
+                    if (!sku) return;
+                    const name = prompt('Enter Product Name:');
+                    if (!name) return;
+                    const qty = parseInt(prompt('Enter Quantity:'));
+                    if (isNaN(qty)) return;
+                    const price = parseFloat(prompt('Enter Price:'));
+                    if (isNaN(price)) return;
+
+                    api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
+                        alert('Product added!');
+                        if (currentView === 'dashboard') loadDashboard();
+                        if (currentView === 'stock') loadStock();
+                    }).catch(e => alert('Error: ' + e.message));
+                }
+
+                function editProduct(id) {
+                    const p = allProducts.find(x => x.id === id);
+                    if (!p) return;
+                    const name = prompt('Edit name:', p.name);
+                    if (!name) return;
+                    const qty = parseInt(prompt('Edit quantity:', p.quantity));
+                    if (isNaN(qty)) return;
+                    const price = parseFloat(prompt('Edit price:', p.price));
+                    if (isNaN(price)) return;
+
+                    api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
+                        alert('Product updated!');
+                        loadStock();
+                    }).catch(e => alert('Error: ' + e.message));
+                }
+
+                async function deleteProduct(id) {
+                    if (confirm('Delete this product?')) {
+                        try {
+                            await api.delete(`/api/inventory/${id}`);
+                            alert('Product deleted!');
+                            loadStock();
+                        } catch (error) {
+                            alert('Error: ' + error.message);
+                        }
+                    }
+                }
+
+                async function exportCSV() {
+                    try {
+                        const response = await fetch('/api/export-csv', {
+                            headers: {'Authorization': localStorage.getItem('currentToken')}
+                        });
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'inventory.csv';
+                        a.click();
+                    } catch (error) {
+                        alert('Export failed: ' + error.message);
+                    }
+                }
+
+                function importCSV() {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.csv';
+                    input.onchange = async (e) => {
+                        const file = e.target.files[0];
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        try {
+                            const res = await fetch('/api/import-csv', {
+                                method: 'POST',
+                                headers: {'Authorization': localStorage.getItem('currentToken')},
+                                body: formData
+                            });
+                            const data = await res.json();
+                            alert(`Imported: ${data.imported}, Updated: ${data.updated}, Invalid: ${data.invalid}`);
+                            loadStock();
+                        } catch (error) {
+                            alert('Import failed: ' + error.message);
+                        }
+                    };
+                    input.click();
+                }
+
+                function logout() {
+                    localStorage.clear();
+                    location.reload();
+                }
+
+                // Initial render
+                renderUI();
+                loadDashboard();
+            }
+    </script>
+</body>
+</html>
