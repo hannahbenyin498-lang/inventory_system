@@ -36,9 +36,10 @@ wheels/
 .DS_Store
 
 # PyInstaller
-*.spec
+# Note: ChrisEffect.spec is tracked because it's the main build config
 build/
 dist/
+*.egg-info/
 
 # Database
 *.db

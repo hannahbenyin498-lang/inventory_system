@@ -1,0 +1,127 @@
+=====================================================
+          CHRIS EFFECT INVENTORY SYSTEM
+            System Requirements & Setup
+=====================================================
+
+MINIMUM SYSTEM REQUIREMENTS
+===========================
+
+✓ Operating System:  Windows 7 or later (32-bit or 64-bit)
+✓ RAM Memory:        512 MB minimum (1 GB recommended)
+✓ Disk Space:        150 MB free space
+✓ Internet:          Not required
+
+
+INSTALLATION
+============
+
+1. Download ChrisEffect.exe
+2. Run ChrisEffect.exe
+3. Create database on first run (automatic)
+4. Login with default:
+   - Username: admin
+   - Password: admin
+
+
+FIRST-TIME SETUP
+================
+
+On first launch:
+• Database is created automatically
+• Default admin user created
+• Ready to use - start adding products!
+
+To load sample data:
+• Run: python scripts/load_sample_data.py
+• Adds 15 sample products for testing
+
+
+FEATURES
+========
+
+✓ Inventory Management     - Add/edit/delete products
+✓ Stock Tracking          - Real-time quantities
+✓ Sales Recording         - Track sales & profits
+✓ CSV Import/Export       - Backup & migration
+✓ User Authentication     - Admin & User roles
+✓ Low Stock Alerts        - Automatic notifications
+✓ Category Management     - Organize products
+✓ Product Images          - Store visual references
+
+
+WHAT'S INCLUDED
+===============
+
+ChrisEffect.exe
+  • Standalone Windows executable
+  • All dependencies bundled
+  • No installation required
+  • Works on any Windows computer
+  • Can run from USB drive
+
+Database
+  • SQLite database (store_inventory.db)
+  • Created automatically first run
+  • Stores inventory & sales data
+  • Portable - can be moved between computers
+
+
+TROUBLESHOOTING
+===============
+
+Problem: "Cannot find python"
+→ Solution: Application is standalone, Python not needed
+
+Problem: "Access Denied" error
+→ Solution: Run as Administrator (right-click → Run as Admin)
+
+Problem: "Database locked" error
+→ Solution: Close application and try again
+
+Problem: Lost database/start fresh
+→ Solution: Delete store_inventory.db and restart
+
+
+SUPPORT
+=======
+
+For detailed installation guide:
+• See: SETUP_AND_DISTRIBUTION.md
+
+For feature documentation:
+• See: README.md
+
+For project structure:
+• See: PROJECT_STRUCTURE.md
+
+
+NOTES
+=====
+
+• No internet connection required
+• Works completely offline
+• Can run from USB drive
+• Portable - no registry changes
+• Multiple computers - each has own database
+• Windows SmartScreen may warn on first run
+  → Click "More info" then "Run anyway"
+
+
+GETTING STARTED QUICKLY
+=======================
+
+Step 1: Run ChrisEffect.exe
+Step 2: Login (admin / admin)
+Step 3: Click "+ Add New" to add products
+Step 4: Click "Record Sale" to track sales
+Step 5: Use "Export CSV" to backup data
+
+
+CONTACT
+=======
+
+Created: February 2026
+Version: 1.0
+Repository: https://github.com/hannahbenyin498-lang/inventory_system
+
+=====================================================
