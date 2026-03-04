@@ -5,7 +5,8 @@ import csv
 import uuid
 import shutil
 import hashlib
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
 
@@ -91,32 +92,117 @@ def init_db():
         )
     """)
     
+    # Admin roles/privileges table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS admin_privileges (
+            username TEXT PRIMARY KEY,
+            admin_role TEXT NOT NULL,
+            permissions TEXT,
+            created_at TEXT
+        )
+    """)
+    
     # Check if default users exist
     c.execute("SELECT count(*) FROM users")
     if c.fetchone()[0] == 0:
         admin_pass = hashlib.sha256("admin".encode()).hexdigest()
         user_pass = hashlib.sha256("user".encode()).hexdigest()
+        director_pass = hashlib.sha256("director".encode()).hexdigest()
+        developer_pass = hashlib.sha256("developer".encode()).hexdigest()
+        
+        # Create default users
         c.execute("INSERT INTO users VALUES (?, ?, ?)", ("admin", admin_pass, "admin"))
         c.execute("INSERT INTO users VALUES (?, ?, ?)", ("user", user_pass, "user"))
+        c.execute("INSERT INTO users VALUES (?, ?, ?)", ("director", director_pass, "admin"))
+        c.execute("INSERT INTO users VALUES (?, ?, ?)", ("deputy_director", admin_pass, "admin"))
+        c.execute("INSERT INTO users VALUES (?, ?, ?)", ("developer", developer_pass, "admin"))
+        
+        # Add admin privileges
+        c.execute("INSERT INTO admin_privileges VALUES (?, ?, ?, ?)", 
+                 ("admin", "system_admin", "all", datetime.now().isoformat()))
+        c.execute("INSERT INTO admin_privileges VALUES (?, ?, ?, ?)", 
+                 ("director", "director", "inventory,sales,users,reports,settings", datetime.now().isoformat()))
+        c.execute("INSERT INTO admin_privileges VALUES (?, ?, ?, ?)", 
+                 ("deputy_director", "deputy_director", "inventory,sales,reports", datetime.now().isoformat()))
+        c.execute("INSERT INTO admin_privileges VALUES (?, ?, ?, ?)", 
+                 ("developer", "developer", "system,debug,all", datetime.now().isoformat()))
     
     conn.commit()
     conn.close()
 
-# --- Authentication ---
+# --- Authentication & Authorization ---
+# In-memory token store for RBAC with multi-client support
+token_store = {}  # {token: {username, role, login_time, expires_at, client_info, device_id}}
+TOKEN_EXPIRY_HOURS = 24  # Token expiration time
+
+def cleanup_expired_tokens():
+    """Remove expired tokens from store"""
+    current_time = datetime.now()
+    expired = [token for token, data in token_store.items() if data.get('expires_at') < current_time]
+    for token in expired:
+        del token_store[token]
+    return len(expired)
+
 def require_login(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         auth = request.headers.get('Authorization')
         if not auth:
             return jsonify({'error': 'Unauthorized'}), 401
+        
+        # Clean up expired tokens periodically
+        if len(token_store) % 10 == 0:
+            cleanup_expired_tokens()
+        
+        # Verify token is valid and not expired
+        if auth not in token_store:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        token_data = token_store[auth]
+        if token_data.get('expires_at') < datetime.now():
+            del token_store[auth]
+            return jsonify({'error': 'Token expired'}), 401
+        
         return f(*args, **kwargs)
     return decorated_function
+
+def require_admin(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token or token not in token_store:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        token_data = token_store[token]
+        # Check expiration
+        if token_data.get('expires_at') < datetime.now():
+            del token_store[token]
+            return jsonify({'error': 'Token expired'}), 401
+        
+        user_role = token_data.get('role')
+        if user_role != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+def get_user_from_token(token):
+    """Get username and role from token, checking expiration"""
+    if token in token_store:
+        token_data = token_store[token]
+        # Check if token is expired
+        if token_data.get('expires_at') < datetime.now():
+            del token_store[token]
+            return None
+        return token_data
+    return None
 
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.json
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
+    device_id = data.get('device_id', '').strip() or str(uuid.uuid4())
     
     if not username or not password:
         return jsonify({'error': 'Username and password required'}), 400
@@ -124,16 +210,37 @@ def login():
     conn = get_db()
     c = conn.cursor()
     hashed = hashlib.sha256(password.encode()).hexdigest()
-    c.execute("SELECT role FROM users WHERE username=? AND password_hash=?", (username, hashed))
+    c.execute("SELECT username, role FROM users WHERE username=? AND password_hash=?", (username, hashed))
     row = c.fetchone()
     conn.close()
     
     if row:
+        # Generate secure random token
+        token = secrets.token_urlsafe(32)
+        login_time = datetime.now()
+        expires_at = login_time + timedelta(hours=TOKEN_EXPIRY_HOURS)
+        
+        # Store token with metadata for multi-client support
+        token_store[token] = {
+            'username': username,
+            'role': row['role'],
+            'login_time': login_time.isoformat(),
+            'expires_at': expires_at,
+            'device_id': device_id,
+            'client_info': {
+                'user_agent': request.headers.get('User-Agent', 'Unknown'),
+                'ip_address': request.remote_addr
+            }
+        }
+        
         return jsonify({
             'success': True,
             'username': username,
-            'role': row[0],
-            'token': hashlib.sha256(f"{username}{password}".encode()).hexdigest()
+            'role': row['role'],
+            'token': token,
+            'device_id': device_id,
+            'expires_at': expires_at.isoformat(),
+            'expires_in_hours': TOKEN_EXPIRY_HOURS
         })
     
     return jsonify({'error': 'Invalid credentials'}), 401
@@ -184,20 +291,70 @@ def get_inventory():
     conn = get_db()
     c = conn.cursor()
     search = request.args.get('search', '').strip()
+    category = request.args.get('category', '').strip()
+    status = request.args.get('status', '').strip()
+    min_price = request.args.get('min_price', type=float)
+    max_price = request.args.get('max_price', type=float)
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 12, type=int)
+    
+    # Build query with filters
+    query = "SELECT id, sku, name, category, quantity, price, status, image FROM inventory_v2 WHERE 1=1"
+    params = []
     
     if search:
-        c.execute("""
-            SELECT id, sku, name, category, quantity, price, status, image 
-            FROM inventory_v2 
-            WHERE name LIKE ? OR sku LIKE ? OR category LIKE ?
-            ORDER BY name
-        """, ('%' + search + '%', '%' + search + '%', '%' + search + '%'))
-    else:
-        c.execute("SELECT id, sku, name, category, quantity, price, status, image FROM inventory_v2 ORDER BY name")
+        query += " AND (name LIKE ? OR sku LIKE ? OR category LIKE ?)"
+        params.extend(['%' + search + '%', '%' + search + '%', '%' + search + '%'])
     
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    
+    if min_price is not None:
+        query += " AND price >= ?"
+        params.append(min_price)
+    
+    if max_price is not None:
+        query += " AND price <= ?"
+        params.append(max_price)
+    
+    query += " ORDER BY name"
+    
+    # Get total count
+    count_query = f"SELECT COUNT(*) FROM inventory_v2 WHERE 1=1"
+    if search:
+        count_query += " AND (name LIKE ? OR sku LIKE ? OR category LIKE ?)"
+    if category:
+        count_query += " AND category = ?"
+    if status:
+        count_query += " AND status = ?"
+    if min_price is not None:
+        count_query += " AND price >= ?"
+    if max_price is not None:
+        count_query += " AND price <= ?"
+    
+    c.execute(count_query, params)
+    total = c.fetchone()[0]
+    
+    # Apply pagination
+    offset = (page - 1) * limit
+    query += f" LIMIT {limit} OFFSET {offset}"
+    
+    c.execute(query, params)
     items = [dict(row) for row in c.fetchall()]
     conn.close()
-    return jsonify(items)
+    
+    return jsonify({
+        'items': items,
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'pages': (total + limit - 1) // limit
+    })
 
 @app.route('/api/inventory', methods=['POST'])
 @require_login
@@ -208,6 +365,7 @@ def add_product():
     category = data.get('category', 'Uncategorized').strip() or 'Uncategorized'
     quantity = int(data.get('quantity', 0))
     price = float(data.get('price', 0))
+    image = data.get('image', '').strip() or None
     
     if not name or not sku:
         return jsonify({'error': 'Name and SKU required'}), 400
@@ -234,15 +392,15 @@ def add_product():
         status = 'In Stock'
     
     c.execute("""
-        INSERT INTO inventory_v2 (sku, name, category, quantity, price, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (sku, name, category, quantity, price, status))
+        INSERT INTO inventory_v2 (sku, name, category, quantity, price, status, image)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (sku, name, category, quantity, price, status, image))
     
     conn.commit()
     product_id = c.lastrowid
     conn.close()
     
-    return jsonify({'id': product_id, 'message': 'Product added'}), 201
+    return jsonify({'id': product_id, 'message': 'Product added', 'image': image}), 201
 
 @app.route('/api/inventory/<int:product_id>', methods=['GET'])
 @require_login
@@ -266,6 +424,7 @@ def update_product(product_id):
     category = data.get('category', 'Uncategorized').strip() or 'Uncategorized'
     quantity = int(data.get('quantity', 0))
     price = float(data.get('price', 0))
+    image = data.get('image', '').strip() or None
     
     if not name:
         return jsonify({'error': 'Name required'}), 400
@@ -284,9 +443,9 @@ def update_product(product_id):
     
     c.execute("""
         UPDATE inventory_v2 
-        SET name=?, category=?, quantity=?, price=?, status=?
+        SET name=?, category=?, quantity=?, price=?, status=?, image=?
         WHERE id=?
-    """, (name, category, quantity, price, status, product_id))
+    """, (name, category, quantity, price, status, image, product_id))
     
     conn.commit()
     conn.close()
@@ -294,10 +453,8 @@ def update_product(product_id):
     return jsonify({'message': 'Product updated'})
 
 @app.route('/api/inventory/<int:product_id>', methods=['DELETE'])
-@require_login
+@require_admin
 def delete_product(product_id):
-    require_admin()
-    
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM inventory_v2 WHERE id=?", (product_id,))
@@ -369,7 +526,7 @@ def get_sales():
 
 # --- CSV Import/Export ---
 @app.route('/api/import-csv', methods=['POST'])
-@require_login
+@require_admin
 def import_csv():
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
@@ -468,13 +625,38 @@ def upload_image():
     if not file.filename:
         return jsonify({'error': 'No file selected'}), 400
     
-    # Save file with unique name
-    ext = os.path.splitext(file.filename)[1]
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(IMAGES_DIR, unique_name)
-    file.save(filepath)
+    # Validate file type
+    allowed_ext = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_ext:
+        return jsonify({'error': f'File type not allowed. Must be: {" ".join(allowed_ext)}'}), 400
     
-    return jsonify({'path': f'images/{unique_name}'})
+    # Check file size (max 5MB)
+    max_size = 5 * 1024 * 1024
+    file.seek(0, os.SEEK_END)
+    file_length = file.tell()
+    file.seek(0)
+    
+    if file_length > max_size:
+        return jsonify({'error': 'File too large. Maximum size: 5MB'}), 400
+    
+    if file_length == 0:
+        return jsonify({'error': 'File is empty'}), 400
+    
+    try:
+        # Save file with unique name
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(IMAGES_DIR, unique_name)
+        file.save(filepath)
+        
+        return jsonify({
+            'success': True,
+            'path': f'images/{unique_name}',
+            'filename': unique_name,
+            'size': file_length
+        })
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
@@ -566,11 +748,237 @@ def delete_category_threshold(category):
     
     return jsonify({'message': f'Threshold for {category} cleared'})
 
-# --- Admin Check ---
-def require_admin():
-    auth = request.headers.get('Authorization')
-    if not auth:
-        raise Exception('Unauthorized')
+@app.route('/api/admin-users', methods=['GET'])
+@require_admin
+def get_admin_users():
+    """Get list of all users with admin privileges"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT u.username, u.role, ap.admin_role, ap.permissions, ap.created_at
+        FROM users u
+        LEFT JOIN admin_privileges ap ON u.username = ap.username
+        WHERE u.role = 'admin'
+        ORDER BY u.username
+    """)
+    admins = []
+    for row in c.fetchall():
+        admins.append({
+            'username': row[0],
+            'role': row[1],
+            'admin_role': row[2] or 'user',
+            'permissions': row[3] or '',
+            'created_at': row[4]
+        })
+    conn.close()
+    return jsonify(admins)
+
+@app.route('/api/admin-users/<username>', methods=['PUT'])
+@require_admin
+def update_admin_privileges(username):
+    """Update admin privileges for a user"""
+    token = request.headers.get('Authorization')
+    current_user = get_user_from_token(token)
+    
+    if current_user['username'] == username:
+        return jsonify({'error': 'Cannot modify your own privileges'}), 400
+    
+    data = request.json
+    admin_role = data.get('admin_role', 'user').strip()
+    permissions = data.get('permissions', '').strip()
+    
+    valid_roles = ['user', 'director', 'deputy_director', 'developer', 'system_admin']
+    if admin_role not in valid_roles:
+        return jsonify({'error': f'Invalid admin role. Must be one of: {" ".join(valid_roles)}'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT OR REPLACE INTO admin_privileges (username, admin_role, permissions, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (username, admin_role, permissions, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'message': f'Admin privileges updated for {username}',
+        'admin_role': admin_role,
+        'permissions': permissions
+    })
+@app.route('/api/user-info', methods=['GET'])
+@require_login
+def get_user_info():
+    token = request.headers.get('Authorization')
+    user_data = get_user_from_token(token)
+    if user_data:
+        return jsonify({
+            'username': user_data['username'],
+            'role': user_data['role'],
+            'is_admin': user_data['role'] == 'admin'
+        })
+    return jsonify({'error': 'User not found'}), 404
+
+@app.route('/api/logout', methods=['POST'])
+@require_login
+def logout():
+    """Logout current session (device)"""
+    token = request.headers.get('Authorization')
+    if token in token_store:
+        del token_store[token]
+    return jsonify({'message': 'Logged out successfully'})
+
+@app.route('/api/sessions', methods=['GET'])
+@require_login
+def get_sessions():
+    """Get all active sessions for current user"""
+    token = request.headers.get('Authorization')
+    current_user_data = token_store.get(token)
+    
+    if not current_user_data:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    current_username = current_user_data['username']
+    
+    # Find all active sessions for this user
+    sessions = []
+    for session_token, session_data in token_store.items():
+        if session_data['username'] == current_username:
+            is_current = session_token == token
+            session_info = {
+                'token': session_token[:8] + '...',  # Obfuscate token
+                'device_id': session_data.get('device_id'),
+                'login_time': session_data.get('login_time'),
+                'expires_at': session_data.get('expires_at').isoformat() if isinstance(session_data.get('expires_at'), datetime) else session_data.get('expires_at'),
+                'user_agent': session_data.get('client_info', {}).get('user_agent'),
+                'ip_address': session_data.get('client_info', {}).get('ip_address'),
+                'is_current': is_current
+            }
+            sessions.append(session_info)
+    
+    return jsonify(sessions)
+
+@app.route('/api/sessions/logout-all', methods=['POST'])
+@require_login
+def logout_all_sessions():
+    """Logout all sessions for current user except this one (optional)"""
+    token = request.headers.get('Authorization')
+    current_user_data = token_store.get(token)
+    
+    if not current_user_data:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    current_username = current_user_data['username']
+    data = request.json or {}
+    keep_current = data.get('keep_current', True)  # Keep current session active if True
+    
+    # Remove all sessions for this user
+    sessions_removed = 0
+    tokens_to_remove = []
+    for session_token, session_data in token_store.items():
+        if session_data['username'] == current_username:
+            if keep_current and session_token == token:
+                continue  # Keep current session
+            tokens_to_remove.append(session_token)
+            sessions_removed += 1
+    
+    for session_token in tokens_to_remove:
+        del token_store[session_token]
+    
+    return jsonify({
+        'message': f'Logged out {sessions_removed} session(s)',
+        'sessions_removed': sessions_removed,
+        'current_session_active': keep_current
+    })
+
+# --- User Management (Admin Only) ---
+@app.route('/api/users', methods=['GET'])
+@require_admin
+def get_all_users():
+    """Get list of all users (admin only)"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT username, role FROM users ORDER BY username")
+    users = [{'username': row['username'], 'role': row['role']} for row in c.fetchall()]
+    conn.close()
+    return jsonify(users)
+
+@app.route('/api/users', methods=['POST'])
+@require_admin
+def create_user():
+    """Create new user (admin only)"""
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    role = data.get('role', 'user')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    if role not in ['user', 'admin']:
+        return jsonify({'error': 'Role must be user or admin'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Check if user already exists
+    c.execute("SELECT username FROM users WHERE username=?", (username,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Username already exists'}), 409
+    
+    # Create new user
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+    try:
+        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
+                 (username, hashed, role))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'username': username, 'role': role}), 201
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<username>', methods=['DELETE'])
+@require_admin
+def delete_user(username):
+    """Delete user (admin only, cannot delete self)"""
+    token = request.headers.get('Authorization')
+    current_user = get_user_from_token(token)
+    
+    # Prevent admin from deleting themselves
+    if current_user['username'] == username:
+        return jsonify({'error': 'Cannot delete your own account'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE username=?", (username,))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': f'User {username} deleted'})
+
+@app.route('/api/users/<username>/role', methods=['PUT'])
+@require_admin
+def update_user_role(username):
+    """Update user role (admin only, cannot change own role)"""
+    token = request.headers.get('Authorization')
+    current_user = get_user_from_token(token)
+    
+    # Prevent admin from changing their own role
+    if current_user['username'] == username:
+        return jsonify({'error': 'Cannot change your own role'}), 400
+    
+    data = request.json
+    new_role = data.get('role', '').strip()
+    
+    if new_role not in ['user', 'admin']:
+        return jsonify({'error': 'Role must be user or admin'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE users SET role=? WHERE username=?", (new_role, username))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': f'User {username} role updated to {new_role}'})
 
 # --- Web UI Routes ---
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -718,6 +1126,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             if (currentView === 'dashboard') {
                 html += getDashboardHTML();
+            } else if (currentView === 'gallery') {
+                html += getProductGalleryHTML();
             } else if (currentView === 'stock') {
                 html += getStockHTML();
             } else if (currentView === 'sales') {
@@ -740,9 +1150,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <span class="material-symbols-outlined text-[24px]">grid_view</span>
                         <span class="text-[9px] font-extrabold uppercase tracking-widest">Dashboard</span>
                     </a>
-                    <a onclick="currentView='stock'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'stock' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
-                        <span class="material-symbols-outlined text-[24px]">inventory_2</span>
-                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Stock</span>
+                    <a onclick="currentView='gallery'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'gallery' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
+                        <span class="material-symbols-outlined text-[24px]">collections</span>
+                        <span class="text-[9px] font-extrabold uppercase tracking-widest">Products</span>
                     </a>
                     <a onclick="currentView='sales'; renderUI()" class="flex flex-col items-center gap-1.5 ${currentView === 'sales' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'} transition-colors cursor-pointer">
                         <span class="material-symbols-outlined text-[24px]">point_of_sale</span>
@@ -759,6 +1169,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             appDiv.innerHTML = html;
             if (currentView === 'dashboard') {
                 loadDashboard();
+            } else if (currentView === 'gallery') {
+                loadProductGallery();
             } else if (currentView === 'stock') {
                 loadStock();
             } else if (currentView === 'sales') {
@@ -771,6 +1183,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     if (select) select.addEventListener('change', updateSalePriceDisplay);
                     if (qtyInput) qtyInput.addEventListener('input', updateSalePriceDisplay);
                 }, 100);
+            } else if (currentView === 'settings') {
+                if (roleUser === 'admin') {
+                    loadAdminUsers();
+                }
             } else if (currentView === 'addManual') {
                 setTimeout(() => {
                     const form = document.getElementById('addProductForm');
@@ -782,6 +1198,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             const category = document.getElementById('formCategory').value.trim() || 'Uncategorized';
                             const quantity = parseInt(document.getElementById('formQuantity').value);
                             const price = parseFloat(document.getElementById('formPrice').value);
+                            const image = document.getElementById('formImagePath').value || null;
                             
                             if (!sku || !name) {
                                 alert('SKU and Name are required');
@@ -789,7 +1206,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             }
                             
                             try {
-                                await api.post('/api/inventory', {sku, name, category, quantity, price});
+                                await api.post('/api/inventory', {sku, name, category, quantity, price, image});
                                 alert('Product added successfully!');
                                 currentView = 'stock';
                                 renderUI();
@@ -800,6 +1217,119 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     }
                 }, 100);
             }
+        }
+
+        function getProductGalleryHTML() {
+            return `
+            <main class="pb-32 px-5 pt-6">
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-[24px] font-extrabold text-white">Product Gallery</h2>
+                        <div class="flex gap-2">
+                            <input type="text" id="gallerySearch" placeholder="Search by name, SKU..." class="px-4 py-2 bg-navy-800/50 border border-white/10 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 text-sm" onkeyup="applyGalleryFilters()"/>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <!-- Filters Sidebar -->
+                    <div class="md:col-span-1">
+                        <div class="glass-card rounded-2xl p-4 sticky top-20">
+                            <h3 class="font-bold text-white mb-4">Filters</h3>
+                            
+                            <div class="mb-4">
+                                <label class="text-slate-400 text-xs font-semibold uppercase mb-2 block">Category</label>
+                                <select id="galleryCategory" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none" onchange="applyGalleryFilters()">
+                                    <option value="">All Categories</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <label class="text-slate-400 text-xs font-semibold uppercase mb-2 block">Stock Status</label>
+                                <select id="galleryStatus" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none" onchange="applyGalleryFilters()">
+                                    <option value="">All Items</option>
+                                    <option value="In Stock">In Stock</option>
+                                    <option value="Low Stock">Low Stock</option>
+                                    <option value="Out of Stock">Out of Stock</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="text-slate-400 text-xs font-semibold uppercase mb-3 block">Price Range</label>
+                                <div class="space-y-2">
+                                    <input type="number" id="minPrice" placeholder="Min" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none" onchange="applyGalleryFilters()"/>
+                                    <input type="number" id="maxPrice" placeholder="Max" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none" onchange="applyGalleryFilters()"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Products Grid -->
+                    <div class="md:col-span-3">
+                        <div id="galleryProductsContainer" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                            <div class="col-span-full text-center py-12">
+                                <p class="text-slate-400">Loading products...</p>
+                            </div>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div id="galleryPagination" class="flex items-center justify-center gap-2 mt-8 mb-6"></div>
+                    </div>
+                </div>
+
+                <!-- Edit Product Modal -->
+                <div id="editProductModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden z-[100] flex items-center justify-center p-4">
+                    <div class="glass-card rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                        <div class="sticky top-0 bg-navy-950/95 border-b border-white/10 p-6 flex items-center justify-between">
+                            <h2 class="text-2xl font-bold text-white">Edit Product</h2>
+                            <button onclick="closeEditModal()" class="text-slate-400 hover:text-white">
+                                <span class="material-symbols-outlined text-[28px]">close</span>
+                            </button>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <div>
+                                <label class="text-slate-400 text-sm font-semibold mb-2 block">Product Image</label>
+                                <div id="editImagePreview" class="mb-3"></div>
+                                <div class="flex items-center gap-3">
+                                    <input type="file" id="editProductImage" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" class="flex-1 bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-slate-400 file:bg-blue-600 file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:cursor-pointer hover:border-white/20 transition"/>
+                                    <button type="button" onclick="uploadEditProductImage()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium whitespace-nowrap">Upload</button>
+                                </div>
+                                <button type="button" onclick="removeEditProductImage()" class="mt-2 text-sm text-red-400 hover:text-red-300">Remove Image</button>
+                            </div>
+                            <div>
+                                <label class="text-slate-400 text-sm font-semibold mb-2 block">Product Name</label>
+                                <input type="text" id="editProductName" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary/50"/>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="text-slate-400 text-sm font-semibold mb-2 block">SKU</label>
+                                    <input type="text" id="editProductSku" disabled class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-slate-500 cursor-not-allowed"/>
+                                </div>
+                                <div>
+                                    <label class="text-slate-400 text-sm font-semibold mb-2 block">Category</label>
+                                    <input type="text" id="editProductCategory" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary/50"/>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="text-slate-400 text-sm font-semibold mb-2 block">Quantity</label>
+                                    <input type="number" id="editProductQty" min="0" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary/50"/>
+                                </div>
+                                <div>
+                                    <label class="text-slate-400 text-sm font-semibold mb-2 block">Price</label>
+                                    <input type="number" id="editProductPrice" min="0" step="0.01" class="w-full bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary/50"/>
+                                </div>
+                            </div>
+                            <div id="editProductStatusMessage" class="text-slate-400 text-sm"></div>
+                            <div class="flex gap-3 pt-4">
+                                <button onclick="saveProductEdits()" class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium">Save Changes</button>
+                                <button onclick="closeEditModal()" class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            `;
         }
 
         function getDashboardHTML() {
@@ -828,10 +1358,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <button onclick="importCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Import</button>
                     </div>
                 </div>
-                <div class="glass-card rounded-2xl overflow-hidden">
+                <div class="glass-card rounded-2xl overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead class="bg-navy-800/50 border-b border-white/5">
                             <tr>
+                                <th class="px-4 py-3 text-left text-slate-300 font-semibold">Image</th>
                                 <th class="px-6 py-3 text-left text-slate-300 font-semibold">SKU</th>
                                 <th class="px-6 py-3 text-left text-slate-300 font-semibold">Name</th>
                                 <th class="px-6 py-3 text-center text-slate-300 font-semibold">Qty</th>
@@ -840,7 +1371,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                 <th class="px-6 py-3 text-center text-slate-300 font-semibold">Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="stockTable"></tbody>
+                        <tbody id=\"stockTable\"></tbody>
                     </table>
                 </div>
             </main>
@@ -849,9 +1380,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         function getSettingsHTML() {
             return `
-            <main class="pb-32 px-5 pt-6 max-w-2xl mx-auto">
+            <main class="pb-32 px-5 pt-6 max-w-4xl mx-auto">
                 <h2 class="text-[20px] font-extrabold text-white mb-6">Settings</h2>
-                <div class="glass-card rounded-2xl p-6">
+                
+                <div class="glass-card rounded-2xl p-6 mb-6">
                     <h3 class="text-lg font-bold text-white mb-4">User Profile</h3>
                     <div class="mb-6">
                         <p class="text-slate-400">Username: <span class="text-white font-semibold">${localStorage.getItem('currentUser')}</span></p>
@@ -859,6 +1391,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                     <button onclick="logout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
                 </div>
+                
+                ${localStorage.getItem('currentRole') === 'admin' ? `
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-bold text-white mb-4">Admin Users & Privileges</h3>
+                    <div id="adminUsersList" class="space-y-3">
+                        <p class="text-slate-400 text-sm">Loading admin users...</p>
+                    </div>
+                </div>
+                ` : ''}
             </main>
             `;
         }
@@ -937,6 +1478,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                 <input type="number" id="formPrice" placeholder="0.00" value="0" min="0" step="0.01" required class="w-full mt-2 bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary/50"/>
                             </div>
                         </div>
+                        <div>
+                            <label class="text-slate-400 text-sm font-semibold">Product Image</label>
+                            <div class="mt-2 flex items-center gap-4">
+                                <input type="file" id="formImage" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" class="flex-1 bg-navy-800/50 border border-white/10 rounded-lg px-4 py-2 text-slate-400 file:bg-blue-600 file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:cursor-pointer hover:border-white/20 transition"/>
+                                <button type="button" onclick="uploadProductImage()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium whitespace-nowrap">Upload</button>
+                            </div>
+                            <div id="imagePreview" class="mt-4"></div>
+                            <input type="hidden" id="formImagePath" value=""/>
+                        </div>
                         <button type="submit" class="w-full mt-6 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold transition">Add Product</button>
                     </form>
                 </div>
@@ -996,6 +1546,242 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             `;
         }
 
+        let galleryCurrentPage = 1;
+        let galleryFilters = {};
+
+        async function loadProductGallery(page = 1) {
+            try {
+                galleryCurrentPage = page;
+                const search = document.getElementById('gallerySearch')?.value || '';
+                const category = document.getElementById('galleryCategory')?.value || '';
+                const status = document.getElementById('galleryStatus')?.value || '';
+                const minPrice = document.getElementById('minPrice')?.value || '';
+                const maxPrice = document.getElementById('maxPrice')?.value || '';
+
+                galleryFilters = {search, category, status, minPrice, maxPrice};
+
+                let url = '/api/inventory?page=' + page + '&limit=12';
+                if (search) url += '&search=' + encodeURIComponent(search);
+                if (category) url += '&category=' + encodeURIComponent(category);
+                if (status) url += '&status=' + encodeURIComponent(status);
+                if (minPrice) url += '&min_price=' + minPrice;
+                if (maxPrice) url += '&max_price=' + maxPrice;
+
+                const response = await api.get(url);
+                const {items, total, pages, page: currentPage} = response;
+
+                // Render products
+                const container = document.getElementById('galleryProductsContainer');
+                if (items.length === 0) {
+                    container.innerHTML = '<div class="col-span-full text-center py-12"><p class="text-slate-400">No products found</p></div>';
+                } else {
+                    container.innerHTML = items.map(p => `
+                        <div class="glass-card rounded-2xl overflow-hidden hover:border-primary/50 transition-all group border border-white/10 flex flex-col">
+                            <div class="relative h-48 bg-navy-800/50 overflow-hidden">
+                                ${p.image ? `
+                                    <img src="${p.image}" alt="${p.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform"/>
+                                ` : `
+                                    <div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-navy-800 to-navy-900 text-slate-600">
+                                        <span class="material-symbols-outlined text-6xl">image_not_supported</span>
+                                    </div>
+                                `}
+                                <div class="absolute top-3 right-3">
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold ${p.status === 'In Stock' ? 'bg-emerald-500/20 text-emerald-400' : p.status === 'Low Stock' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}">
+                                        ${p.status}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="p-4 flex-1 flex flex-col">
+                                <p class="text-xs text-slate-500 font-semibold mb-1">${p.sku || 'NO SKU'}</p>
+                                <h3 class="text-white font-bold mb-1 line-clamp-2">${p.name}</h3>
+                                <p class="text-slate-400 text-xs mb-3">${p.category || 'Uncategorized'}</p>
+                                <div class="flex items-center justify-between mb-4 flex-1">
+                                    <p class="text-primary font-bold text-lg">$${p.price.toFixed(2)}</p>
+                                    <p class="text-slate-400 text-xs">${p.quantity} in stock</p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick="openEditModal(${p.id}, '${p.name}', '${p.sku}', '${p.category}', ${p.quantity}, ${p.price}, '${p.image || ''}')" class="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
+                                        <span class="material-symbols-outlined text-[18px]">edit</span> Edit
+                                    </button>
+                                    ${roleUser === 'admin' ? `<button onclick="deleteGalleryProduct(${p.id})" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
+                                        <span class="material-symbols-outlined text-[18px]">delete</span> Delete
+                                    </button>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+
+                // Render pagination
+                const paginationDiv = document.getElementById('galleryPagination');
+                let paginationHTML = '<div class="flex items-center gap-2">';
+                if (currentPage > 1) {
+                    paginationHTML += `<button onclick="loadProductGallery(1)" class="px-3 py-2 rounded bg-navy-800 text-white hover:bg-navy-700">First</button>`;
+                    paginationHTML += `<button onclick="loadProductGallery(${currentPage - 1})" class="px-3 py-2 rounded bg-navy-800 text-white hover:bg-navy-700">Prev</button>`;
+                }
+
+                for (let i = Math.max(1, currentPage - 2); i <= Math.min(pages, currentPage + 2); i++) {
+                    paginationHTML += `<button onclick="loadProductGallery(${i})" class="px-3 py-2 rounded ${i === currentPage ? 'bg-primary text-white' : 'bg-navy-800 text-white hover:bg-navy-700'}">${i}</button>`;
+                }
+
+                if (currentPage < pages) {
+                    paginationHTML += `<button onclick="loadProductGallery(${currentPage + 1})" class="px-3 py-2 rounded bg-navy-800 text-white hover:bg-navy-700">Next</button>`;
+                    paginationHTML += `<button onclick="loadProductGallery(${pages})" class="px-3 py-2 rounded bg-navy-800 text-white hover:bg-navy-700">Last</button>`;
+                }
+                paginationHTML += `<span class="text-slate-400 text-sm ml-4">Page ${currentPage} of ${pages}</span></div>`;
+                paginationDiv.innerHTML = paginationHTML;
+
+                // Load categories if first load
+                if (document.getElementById('galleryCategory').options.length === 1) {
+                    const categories = await api.get('/api/categories');
+                    const catSelect = document.getElementById('galleryCategory');
+                    categories.forEach(cat => {
+                        const option = document.createElement('option');
+                        option.value = cat;
+                        option.textContent = cat;
+                        catSelect.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading products:', error);
+            }
+        }
+
+        function applyGalleryFilters() {
+            loadProductGallery(1);
+        }
+
+        function openEditModal(id, name, sku, category, quantity, price, image) {
+            const modal = document.getElementById('editProductModal');
+            document.getElementById('editProductName').value = name;
+            document.getElementById('editProductSku').value = sku;
+            document.getElementById('editProductCategory').value = category;
+            document.getElementById('editProductQty').value = quantity;
+            document.getElementById('editProductPrice').value = price;
+            document.getElementById('editProductStatusMessage').textContent = '';
+            document.getElementById('editProductImage').value = '';
+            modal.dataset.productId = id;
+            modal.dataset.currentImage = image || '';
+            displayEditProductImage(image);
+            modal.classList.remove('hidden');
+        }
+
+        function closeEditModal() {
+            const modal = document.getElementById('editProductModal');
+            modal.classList.add('hidden');
+            delete modal.dataset.productId;
+        }
+
+        function displayEditProductImage(imagePath) {
+            const preview = document.getElementById('editImagePreview');
+            if (!imagePath) {
+                preview.innerHTML = '<p class="text-slate-500 text-sm">No image</p>';
+                return;
+            }
+            preview.innerHTML = `
+                <img src="${imagePath}" alt="Product" class="h-32 w-full rounded-lg object-cover border border-white/10"/>
+            `;
+        }
+
+        async function uploadEditProductImage() {
+            const fileInput = document.getElementById('editProductImage');
+            if (!fileInput.files.length) {
+                alert('Please select an image file');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {'Authorization': localStorage.getItem('currentToken')},
+                    body: formData
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    const modal = document.getElementById('editProductModal');
+                    modal.dataset.currentImage = data.path;
+                    displayEditProductImage(data.path);
+                    fileInput.value = '';
+                    alert('Image uploaded successfully!');
+                } else {
+                    alert('Upload failed: ' + data.error);
+                }
+            } catch (error) {
+                alert('Upload error: ' + error.message);
+            }
+        }
+
+        function removeEditProductImage() {
+            const modal = document.getElementById('editProductModal');
+            modal.dataset.currentImage = '';
+            displayEditProductImage('');
+            document.getElementById('editProductImage').value = '';
+        }
+
+        async function saveProductEdits() {
+            const modal = document.getElementById('editProductModal');
+            const productId = parseInt(modal.dataset.productId);
+            const name = document.getElementById('editProductName').value.trim();
+            const category = document.getElementById('editProductCategory').value.trim() || 'Uncategorized';
+            const quantity = parseInt(document.getElementById('editProductQty').value);
+            const price = parseFloat(document.getElementById('editProductPrice').value);
+            const image = modal.dataset.currentImage || null;
+            const statusDiv = document.getElementById('editProductStatusMessage');
+
+            if (!name) {
+                statusDiv.textContent = 'Product name is required';
+                return;
+            }
+
+            if (isNaN(quantity) || quantity < 0) {
+                statusDiv.textContent = 'Quantity must be a non-negative number';
+                return;
+            }
+
+            if (isNaN(price) || price < 0) {
+                statusDiv.textContent = 'Price must be a non-negative number';
+                return;
+            }
+
+            try {
+                await api.put(`/api/inventory/${productId}`, {
+                    name,
+                    category,
+                    quantity,
+                    price,
+                    image
+                });
+                statusDiv.textContent = 'Changes saved successfully!';
+                statusDiv.classList.remove('text-slate-400');
+                statusDiv.classList.add('text-emerald-400');
+                setTimeout(() => {
+                    closeEditModal();
+                    loadProductGallery(galleryCurrentPage);
+                }, 1000);
+            } catch (error) {
+                statusDiv.textContent = 'Error saving changes: ' + error.message;
+                statusDiv.classList.remove('text-slate-400');
+                statusDiv.classList.add('text-red-400');
+            }
+        }
+
+        async function deleteGalleryProduct(id) {
+            if (!confirm('Are you sure you want to delete this product?')) return;
+
+            try {
+                await api.delete(`/api/inventory/${id}`);
+                alert('Product deleted successfully!');
+                loadProductGallery(galleryCurrentPage);
+            } catch (error) {
+                alert('Error deleting product: ' + error.message);
+            }
+        }
+
         async function loadDashboard() {
             try {
                 const dashboard = await api.get('/api/dashboard');
@@ -1052,6 +1838,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
                 table.innerHTML = products.map(p => `
                 <tr class="border-b border-white/5 hover:bg-navy-800/30 transition">
+                    <td class="px-4 py-4">
+                        ${p.image ? `<img src="${p.image}" alt="${p.name}" class="h-12 w-12 rounded-lg object-cover border border-white/10 hover:border-primary/50 transition cursor-pointer" onclick="window.open('${p.image}')" title="Click to view full image"/>` : `<div class="h-12 w-12 rounded-lg bg-slate-700 flex items-center justify-center text-slate-500"><span class="material-symbols-outlined text-[20px]">image_not_supported</span></div>`}
+                    </td>
                     <td class="px-6 py-4 text-slate-300">${p.sku || '-'}</td>
                     <td class="px-6 py-4 text-slate-300">${p.name}</td>
                     <td class="px-6 py-4 text-center font-semibold">${p.quantity}</td>
@@ -1170,6 +1959,49 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             input.click();
         }
 
+        async function uploadProductImage() {
+            const fileInput = document.getElementById('formImage');
+            if (!fileInput.files.length) {
+                alert('Please select an image file');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {'Authorization': localStorage.getItem('currentToken')},
+                    body: formData
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('formImagePath').value = data.path;
+                    const preview = document.getElementById('imagePreview');
+                    preview.innerHTML = `
+                        <div class="flex items-center gap-4 p-4 bg-navy-800/30 rounded-lg border border-emerald-500/30">
+                            <img src="${data.path}" alt="Preview" class="h-20 w-20 rounded object-cover border border-white/10"/>
+                            <div class="flex-1">
+                                <p class="text-slate-300 text-sm font-semibold">${data.filename}</p>
+                                <p class="text-slate-400 text-xs">${(data.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                            <button type="button" onclick="document.getElementById('formImagePath').value=''; document.getElementById('imagePreview').innerHTML=''; document.getElementById('formImage').value='';" class="text-red-400 hover:text-red-300">
+                                <span class="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+                    `;
+                    alert('Image uploaded successfully!');
+                } else {
+                    alert('Upload failed: ' + data.error);
+                }
+            } catch (error) {
+                alert('Upload error: ' + error.message);
+            }
+        }
+
         function updateSalePriceDisplay() {
             const select = document.getElementById('saleProductSelect');
             const priceDisplay = document.getElementById('salePriceDisplay');
@@ -1251,6 +2083,31 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        async function loadAdminUsers() {
+            try {
+                const admins = await api.get('/api/admin-users');
+                const listDiv = document.getElementById('adminUsersList');
+                if (!listDiv) return;
+
+                listDiv.innerHTML = admins.map(admin => `
+                <div class="flex items-center justify-between p-4 bg-navy-800/30 rounded-lg border border-white/10 hover:border-blue-500/30 transition">
+                    <div class="flex-1">
+                        <p class="text-white font-semibold">${admin.username}</p>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">${admin.admin_role.replace(/_/g, ' ').toUpperCase()}</span>
+                            <span class="text-xs text-slate-400">${admin.permissions}</span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-slate-400">Since ${new Date(admin.created_at).toLocaleDateString()}</p>
+                    </div>
+                </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading admin users:', error);
+            }
+        }
+
         function logout() {
             localStorage.clear();
             location.reload();
@@ -1311,10 +2168,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const password = document.getElementById('password').value;
 
                 try {
+                    // Generate a device ID for this client if not already set
+                    let deviceId = localStorage.getItem('deviceId');
+                    if (!deviceId) {
+                        deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                        localStorage.setItem('deviceId', deviceId);
+                    }
+                    
                     const response = await fetch('/api/login', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({username, password})
+                        body: JSON.stringify({username, password, device_id: deviceId})
                     });
                     
                     if (response.ok) {
@@ -1322,6 +2186,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         localStorage.setItem('currentUser', data.username);
                         localStorage.setItem('currentToken', data.token);
                         localStorage.setItem('currentRole', data.role);
+                        localStorage.setItem('tokenExpiry', data.expires_at);
                         location.reload();
                     } else {
                         alert('Invalid credentials');

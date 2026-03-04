@@ -67,6 +67,8 @@
         let allProducts = [];
         let roleUser = '';
         let appDiv = null;
+        let currentEditingId = null;
+        let currentSalesId = null;
         let api = {};
 
         // API HELPER (Global scope)
@@ -115,6 +117,86 @@
         // GLOBAL FUNCTIONS
         function renderUI() {
             let html = `
+            <div id="productModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end z-[70] transition-opacity">
+                <div class="w-full bg-navy-900 rounded-t-3xl p-6 max-h-[90vh] overflow-y-auto">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 id="modalTitle" class="text-xl font-extrabold text-white">Add Product</h2>
+                        <button onclick="closeProductModal()" class="text-slate-400 hover:text-white transition">
+                            <span class="material-symbols-outlined text-[24px]">close</span>
+                        </button>
+                    </div>
+                    <form id="productForm" onsubmit="handleProductSubmit(event)" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-300 mb-2">SKU <span class="text-red-500">*</span></label>
+                            <input type="text" id="modalSku" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 transition" placeholder="e.g., SKU-001" required>
+                            <p id="skuError" class="text-red-500 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-300 mb-2">Product Name <span class="text-red-500">*</span></label>
+                            <input type="text" id="modalName" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 transition" placeholder="Enter product name" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-300 mb-2">Category <span class="text-red-500">*</span></label>
+                            <div id="categoryContainer"></div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-300 mb-2">Quantity <span class="text-red-500">*</span></label>
+                                <input type="number" id="modalQuantity" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 transition" placeholder="0" min="0" required>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-300 mb-2">Price <span class="text-red-500">*</span></label>
+                                <input type="number" id="modalPrice" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 transition" placeholder="0.00" step="0.01" min="0" required>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 pt-4 sticky bottom-0 bg-navy-900">
+                            <button type="button" onclick="closeProductModal()" class="flex-1 px-4 py-3 bg-slate-700/50 hover:bg-slate-700 text-white rounded-xl font-semibold transition">Cancel</button>
+                            <button type="submit" class="flex-1 px-4 py-3 bg-primary hover:bg-blue-600 text-white rounded-xl font-semibold transition">Save Product</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div id="salesModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end z-[70] transition-opacity">
+                <div class="w-full bg-navy-900 rounded-t-3xl p-6 max-h-[90vh] overflow-y-auto">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 id="salesModalTitle" class="text-xl font-extrabold text-white">Record Sale</h2>
+                        <button onclick="closeSalesModal()" class="text-slate-400 hover:text-white transition">
+                            <span class="material-symbols-outlined text-[24px]">close</span>
+                        </button>
+                    </div>
+                    <form id="salesForm" onsubmit="handleSalesSubmit(event)" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-300 mb-2">Product <span class="text-red-500">*</span></label>
+                            <div id="salesProductName" class="px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white"></div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-300 mb-2">Price per Unit</label>
+                                <div id="salesPrice" class="px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-300 mb-2">Available Stock</label>
+                                <div id="salesStock" class="px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-300 mb-2">Quantity to Sell <span class="text-red-500">*</span></label>
+                            <input type="number" id="salesQuantity" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary/50 transition" placeholder="0" min="1" required>
+                            <p id="salesWarning" class="text-orange-400 text-xs mt-2 hidden">Quantity exceeds available stock</p>
+                        </div>
+                        <div class="glass-card rounded-2xl p-4 bg-emerald-500/5 border border-emerald-500/20">
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-300 font-medium">Total Sale:</span>
+                                <span id="salesTotalAmount" class="text-2xl font-extrabold text-emerald-400">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 pt-4 sticky bottom-0 bg-navy-900">
+                            <button type="button" onclick="closeSalesModal()" class="flex-1 px-4 py-3 bg-slate-700/50 hover:bg-slate-700 text-white rounded-xl font-semibold transition">Cancel</button>
+                            <button type="submit" class="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold transition">Complete Sale</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
             <header class="sticky top-0 z-50 bg-navy-950/80 backdrop-blur-xl border-b border-white/5">
                 <div class="flex items-center justify-between px-5 h-16">
                     <div class="flex items-center gap-3">
@@ -130,11 +212,16 @@
                         <button onclick="currentView='settings'; renderUI()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
                             <span class="material-symbols-outlined">settings</span>
                         </button>
-                        <button onclick="logout()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
+                        <button onclick="performLogout()" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-white/5 transition-all">
                             <span class="material-symbols-outlined">logout</span>
                         </button>
-                        <div class="h-9 w-9 rounded-full ring-2 ring-white/10 flex items-center justify-center bg-primary/20 text-primary text-sm font-bold">
-                            ${localStorage.getItem('currentUser').charAt(0).toUpperCase()}
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded ${localStorage.getItem('currentRole') === 'admin' ? 'text-emerald-400 bg-emerald-400/10' : 'text-slate-400 bg-slate-400/10'}">
+                                ${localStorage.getItem('currentRole')}
+                            </span>
+                            <div class="h-9 w-9 rounded-full ring-2 ring-white/10 flex items-center justify-center bg-primary/20 text-primary text-sm font-bold">
+                                ${localStorage.getItem('currentUser').charAt(0).toUpperCase()}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -180,6 +267,8 @@
                 loadDashboard();
             } else if (currentView === 'stock') {
                 loadStock();
+            } else if (currentView === 'settings' && localStorage.getItem('currentRole') === 'admin') {
+                loadUserManagement();
             }
         }
 
@@ -203,10 +292,19 @@
             return `
             <main class="pb-32 px-5 pt-6">
                 <div class="flex items-center justify-between mb-6">
-                    <h2 class="text-[20px] font-extrabold text-white">Stock Management</h2>
+                    <div>
+                        <h2 class="text-[20px] font-extrabold text-white">Stock Management</h2>
+                        <p class="text-sm text-slate-400 mt-1">View and manage your inventory</p>
+                    </div>
                     <div class="flex gap-2">
-                        <button onclick="exportCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Export</button>
-                        <button onclick="importCSV()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium">Import</button>
+                        ${roleUser === 'admin' ? `<button onclick="importCSV()" class="flex items-center gap-2 px-4 py-2.5 bg-navy-800 hover:bg-navy-700 text-white rounded-xl text-sm font-semibold transition-all border border-white/10 hover:border-white/20">
+                            <span class="material-symbols-outlined text-[18px]">upload_file</span>
+                            Import
+                        </button>` : ''}
+                        <button onclick="exportCSV()" class="flex items-center gap-2 px-4 py-2.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-xl text-sm font-semibold transition-all border border-primary/30 hover:border-primary/50">
+                            <span class="material-symbols-outlined text-[18px]">download</span>
+                            Export
+                        </button>
                     </div>
                 </div>
                 <div class="glass-card rounded-2xl overflow-hidden">
@@ -230,18 +328,209 @@
 
         function getSettingsHTML() {
             return `
-            <main class="pb-32 px-5 pt-6 max-w-2xl mx-auto">
+            <main class="pb-32 px-5 pt-6 max-w-4xl mx-auto">
                 <h2 class="text-[20px] font-extrabold text-white mb-6">Settings</h2>
-                <div class="glass-card rounded-2xl p-6">
+                
+                <!-- User Profile Section -->
+                <div class="glass-card rounded-2xl p-6 mb-6">
                     <h3 class="text-lg font-bold text-white mb-4">User Profile</h3>
                     <div class="mb-6">
                         <p class="text-slate-400">Username: <span class="text-white font-semibold">${localStorage.getItem('currentUser')}</span></p>
-                        <p class="text-slate-400">Role: <span class="text-white font-semibold">${localStorage.getItem('currentRole').toUpperCase()}</span></p>
+                        <p class="text-slate-400">Role: <span class="text-white font-semibold px-2 py-1 rounded ${localStorage.getItem('currentRole') === 'admin' ? 'text-emerald-400 bg-emerald-400/10' : 'text-slate-400 bg-slate-400/10'}">${localStorage.getItem('currentRole').toUpperCase()}</span></p>
                     </div>
-                    <button onclick="logout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
+                    ${localStorage.getItem('currentRole') === 'admin' ? `
+                    <div class="mb-6 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+                        <h4 class="font-semibold text-emerald-400 mb-2">Admin Permissions</h4>
+                        <ul class="text-sm text-slate-300 space-y-1">
+                            <li>✓ Delete products</li>
+                            <li>✓ Import CSV data</li>
+                            <li>✓ Manage users (add/remove/change roles)</li>
+                            <li>✓ Access all inventory management features</li>
+                        </ul>
+                    </div>
+                    ` : `
+                    <div class="mb-6 p-4 bg-slate-500/5 border border-slate-500/20 rounded-xl">
+                        <h4 class="font-semibold text-slate-400 mb-2">User Permissions</h4>
+                        <ul class="text-sm text-slate-300 space-y-1">
+                            <li>✓ View inventory</li>
+                            <li>✓ Record sales</li>
+                            <li>✓ View dashboard analytics</li>
+                        </ul>
+                    </div>
+                    `}
+                    <button onclick="performLogout()" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">Logout</button>
                 </div>
+
+                ${localStorage.getItem('currentRole') === 'admin' ? `
+                <!-- User Management Section (Admin Only) -->
+                <div class="glass-card rounded-2xl p-6">
+                    <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <span class="material-symbols-outlined">group</span>
+                        User Management
+                    </h3>
+                    
+                    <!-- Add New User Form -->
+                    <div class="mb-6 p-4 bg-primary/5 border border-primary/20 rounded-xl">
+                        <h4 class="font-semibold text-primary mb-4">Add New User</h4>
+                        <form onsubmit="addNewUser(event)" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <input type="text" id="newUsername" placeholder="Username" class="px-3 py-2 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm placeholder:text-slate-500 focus:outline-none focus:border-primary/50" required>
+                            <input type="password" id="newPassword" placeholder="Password" class="px-3 py-2 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm placeholder:text-slate-500 focus:outline-none focus:border-primary/50" required>
+                            <select id="newRole" class="px-3 py-2 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-primary/50">
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                            <button type="submit" class="px-4 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg text-sm font-semibold transition-all">
+                                <span class="material-symbols-outlined inline text-[18px] mr-1">add</span>Add User
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Users List -->
+                    <div id="usersList" class="space-y-2">
+                        <p class="text-slate-400 text-sm">Loading users...</p>
+                    </div>
+                </div>
+                ` : ''}
             </main>
             `;
+        }
+
+        async function loadUserManagement() {
+            const usersList = document.getElementById('usersList');
+            if (!usersList) return;
+
+            try {
+                const token = localStorage.getItem('currentToken');
+                const response = await fetch('/api/users', {
+                    headers: { 'Authorization': token }
+                });
+                const users = await response.json();
+
+                if (users.length === 0) {
+                    usersList.innerHTML = '<p class="text-slate-400 text-sm">No users found.</p>';
+                    return;
+                }
+
+                usersList.innerHTML = users.map(user => `
+                    <div class="flex items-center justify-between p-3 bg-navy-800/30 border border-white/10 rounded-lg hover:bg-navy-800/50 transition">
+                        <div class="flex items-center gap-3 flex-1">
+                            <div class="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-bold">
+                                ${user.username.charAt(0).toUpperCase()}
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="font-semibold text-white text-sm truncate">${user.username}</p>
+                                <p class="text-[11px] text-slate-400">${user.role}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <select onchange="changeUserRole('${user.username}', this.value)" class="px-2 py-1 bg-navy-700 border border-white/10 rounded text-white text-xs focus:outline-none ${user.username === localStorage.getItem('currentUser') ? 'opacity-50 cursor-not-allowed' : ''}" ${user.username === localStorage.getItem('currentUser') ? 'disabled' : ''}>
+                                <option value="user" ${user.role === 'user' ? 'selected' : ''}>User</option>
+                                <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+                            </select>
+                            ${user.username !== localStorage.getItem('currentUser') ? `
+                            <button onclick="deleteUser('${user.username}')" class="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded text-xs font-semibold transition-all flex items-center gap-1">
+                                <span class="material-symbols-outlined text-[14px]">delete</span>Delete
+                            </button>
+                            ` : '<span class="text-[11px] text-slate-500 px-2 py-1">Current User</span>'}
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading users:', error);
+                usersList.innerHTML = '<p class="text-red-400 text-sm">Error loading users</p>';
+            }
+        }
+
+        async function addNewUser(event) {
+            event.preventDefault();
+            const username = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('newPassword').value;
+            const role = document.getElementById('newRole').value;
+
+            if (!username || !password) {
+                alert('Username and password are required');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('currentToken');
+                const response = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password, role })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert(`User "${username}" created as ${role}`);
+                    document.getElementById('newUsername').value = '';
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('newRole').value = 'user';
+                    loadUserManagement();
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error creating user:', error);
+                alert('Error creating user');
+            }
+        }
+
+        async function deleteUser(username) {
+            if (!confirm(\`Are you sure you want to delete user "\${username}"? This cannot be undone.\`)) {
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('currentToken');
+                const response = await fetch(\`/api/users/\${username}\`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': token }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert(\`User "\${username}" deleted successfully\`);
+                    loadUserManagement();
+                } else {
+                    alert(\`Error: \${data.error}\`);
+                }
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                alert('Error deleting user');
+            }
+        }
+
+        async function changeUserRole(username, newRole) {
+            try {
+                const token = localStorage.getItem('currentToken');
+                const response = await fetch(\`/api/users/\${username}/role\`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ role: newRole })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    alert(\`Error: \${data.error}\`);
+                    loadUserManagement();
+                } else {
+                    alert(\`User "\${username}" role changed to \${newRole}\`);
+                    loadUserManagement();
+                }
+            } catch (error) {
+                console.error('Error changing user role:', error);
+                alert('Error changing user role');
+            }
         }
 
         async function loadDashboard() {
@@ -310,12 +599,20 @@
                         </span>
                     </td>
                     <td class="px-6 py-4 text-center">
-                        <button onclick="editProduct(${p.id})" class="text-primary hover:opacity-70 transition mr-3">
-                            <span class="material-symbols-outlined text-[20px]">edit</span>
-                        </button>
-                        ${roleUser === 'admin' ? `<button onclick="deleteProduct(${p.id})" class="text-red-500 hover:opacity-70 transition">
-                            <span class="material-symbols-outlined text-[20px]">delete</span>
-                        </button>` : ''}
+                        <div class="flex items-center justify-center gap-2">
+                            <button onclick="showSalesModal(${p.id})" class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5" title="Record a sale">
+                                <span class="material-symbols-outlined text-[16px]">add_shopping_cart</span>
+                                Sell
+                            </button>
+                            <button onclick="editProduct(${p.id})" class="px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5" title="Edit product">
+                                <span class="material-symbols-outlined text-[16px]">edit</span>
+                                Edit
+                            </button>
+                            ${roleUser === 'admin' ? `<button onclick="deleteProduct(${p.id})" class="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5" title="Delete product">
+                                <span class="material-symbols-outlined text-[16px]">delete</span>
+                                Delete
+                            </button>` : ''}
+                        </div>
                     </td>
                 </tr>
                 `).join('');
@@ -334,36 +631,36 @@
             }
         }
 
-        function showAddProductModal() {
-            const sku = prompt('Enter SKU:');
-            if (!sku) return;
-            const name = prompt('Enter Product Name:');
-            if (!name) return;
-            const qty = parseInt(prompt('Enter Quantity:'));
-            if (isNaN(qty)) return;
-            const price = parseFloat(prompt('Enter Price:'));
-            if (isNaN(price)) return;
-
-            api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
-                alert('Product added!');
-                loadStock();
-            }).catch(e => alert('Error: ' + e.message));
+        async function showAddProductModal() {
+            currentEditingId = null;
+            document.getElementById('modalTitle').textContent = 'Add Product';
+            document.getElementById('productForm').reset();
+            document.getElementById('modalSku').disabled = false;
+            document.getElementById('skuError').classList.add('hidden');
+            
+            // Load categories
+            await loadCategories();
+            
+            document.getElementById('productModal').classList.remove('hidden');
         }
 
-        function editProduct(id) {
+        async function editProduct(id) {
             const p = allProducts.find(x => x.id === id);
             if (!p) return;
-            const name = prompt('Edit name:', p.name);
-            if (!name) return;
-            const qty = parseInt(prompt('Edit quantity:', p.quantity));
-            if (isNaN(qty)) return;
-            const price = parseFloat(prompt('Edit price:', p.price));
-            if (isNaN(price)) return;
-
-            api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
-                alert('Product updated!');
-                loadStock();
-            }).catch(e => alert('Error: ' + e.message));
+            
+            currentEditingId = id;
+            document.getElementById('modalTitle').textContent = 'Edit Product';
+            document.getElementById('modalSku').value = p.sku || '';
+            document.getElementById('modalName').value = p.name || '';
+            document.getElementById('modalQuantity').value = p.quantity || 0;
+            document.getElementById('modalPrice').value = p.price || 0;
+            document.getElementById('modalSku').disabled = true;
+            document.getElementById('skuError').classList.add('hidden');
+            
+            // Load categories
+            await loadCategories(p.category || 'Uncategorized');
+            
+            document.getElementById('productModal').classList.remove('hidden');
         }
 
         async function deleteProduct(id) {
@@ -375,6 +672,62 @@
                 } catch (error) {
                     alert('Error: ' + error.message);
                 }
+            }
+        }
+
+        function closeProductModal() {
+            document.getElementById('productModal').classList.add('hidden');
+            document.getElementById('productForm').reset();
+            currentEditingId = null;
+        }
+
+        async function loadCategories(selected = 'Uncategorized') {
+            try {
+                const categories = await api.get('/api/categories');
+                const container = document.getElementById('categoryContainer');
+                container.innerHTML = `
+                    <select id="modalCategory" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white focus:outline-none focus:border-primary/50 transition" required>
+                        ${categories.map(cat => `<option value="${cat}" ${cat === selected ? 'selected' : ''}>${cat}</option>`).join('')}
+                    </select>
+                `;
+            } catch (error) {
+                console.error('Error loading categories:', error);
+            }
+        }
+
+        async function handleProductSubmit(event) {
+            event.preventDefault();
+            
+            const sku = document.getElementById('modalSku').value.trim();
+            const name = document.getElementById('modalName').value.trim();
+            const category = document.getElementById('modalCategory').value;
+            const quantity = parseInt(document.getElementById('modalQuantity').value);
+            const price = parseFloat(document.getElementById('modalPrice').value);
+            
+            if (!sku || !name) {
+                alert('SKU and Name are required');
+                return;
+            }
+            
+            if (isNaN(quantity) || isNaN(price)) {
+                alert('Quantity and Price must be valid numbers');
+                return;
+            }
+            
+            try {
+                if (currentEditingId) {
+                    await api.put(`/api/inventory/${currentEditingId}`, {
+                        name, category, quantity, price
+                    });
+                } else {
+                    await api.post('/api/inventory', {
+                        sku, name, category, quantity, price
+                    });
+                }
+                closeProductModal();
+                loadStock();
+            } catch (error) {
+                alert('Error: ' + error.message);
             }
         }
 
@@ -416,6 +769,97 @@
                 }
             };
             input.click();
+        }
+
+        function showSalesModal(productId) {
+            const product = allProducts.find(p => p.id === productId);
+            if (!product) return;
+            
+            currentSalesId = productId;
+            document.getElementById('salesModalTitle').textContent = 'Record Sale';
+            document.getElementById('salesProductName').textContent = product.name;
+            document.getElementById('salesPrice').textContent = `$${product.price.toFixed(2)}`;
+            document.getElementById('salesStock').textContent = `${product.quantity} units`;
+            document.getElementById('salesQuantity').value = '';
+            document.getElementById('salesQuantity').max = product.quantity;
+            document.getElementById('salesWarning').classList.add('hidden');
+            document.getElementById('salesTotalAmount').textContent = '$0.00';
+            document.getElementById('salesForm').reset();
+            document.getElementById('salesModal').classList.remove('hidden');
+        }
+
+        function closeSalesModal() {
+            document.getElementById('salesModal').classList.add('hidden');
+            document.getElementById('salesForm').reset();
+            currentSalesId = null;
+        }
+
+        async function handleSalesSubmit(event) {
+            event.preventDefault();
+            
+            const quantitySold = parseInt(document.getElementById('salesQuantity').value);
+            const product = allProducts.find(p => p.id === currentSalesId);
+            
+            if (!product) {
+                alert('Product not found');
+                return;
+            }
+            
+            if (isNaN(quantitySold) || quantitySold <= 0) {
+                alert('Please enter a valid quantity');
+                return;
+            }
+            
+            if (quantitySold > product.quantity) {
+                alert('Quantity exceeds available stock');
+                return;
+            }
+            
+            try {
+                await api.post('/api/sales', {
+                    product_id: currentSalesId,
+                    quantity: quantitySold
+                });
+                closeSalesModal();
+                loadStock();
+                loadDashboard();
+                alert(`Sale recorded! Sold ${quantitySold} units of ${product.name} for $${(product.price * quantitySold).toFixed(2)}`);\n            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Real-time sales calculation
+        document.addEventListener('input', function(e) {
+            if (e.target.id === 'salesQuantity') {
+                const quantity = parseInt(e.target.value) || 0;
+                const product = allProducts.find(p => p.id === currentSalesId);
+                if (product) {
+                    const total = quantity * product.price;
+                    document.getElementById('salesTotalAmount').textContent = `$${total.toFixed(2)}`;
+                    
+                    if (quantity > product.quantity) {
+                        document.getElementById('salesWarning').classList.remove('hidden');
+                    } else {
+                        document.getElementById('salesWarning').classList.add('hidden');
+                    }
+                }
+            }
+        });
+
+        async function performLogout() {
+            try {
+                const token = localStorage.getItem('currentToken');
+                await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+            localStorage.clear();
+            location.reload();
         }
 
         function logout() {
@@ -817,36 +1261,36 @@
             }
         }
 
-        function showAddProductModal() {
-            const sku = prompt('Enter SKU:');
-            if (!sku) return;
-            const name = prompt('Enter Product Name:');
-            if (!name) return;
-            const qty = parseInt(prompt('Enter Quantity:'));
-            if (isNaN(qty)) return;
-            const price = parseFloat(prompt('Enter Price:'));
-            if (isNaN(price)) return;
-
-            api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
-                alert('Product added!');
-                loadStock();
-            }).catch(e => alert('Error: ' + e.message));
+        async function showAddProductModal() {
+            currentEditingId = null;
+            document.getElementById('modalTitle').textContent = 'Add Product';
+            document.getElementById('productForm').reset();
+            document.getElementById('modalSku').disabled = false;
+            document.getElementById('skuError').classList.add('hidden');
+            
+            // Load categories
+            await loadCategories();
+            
+            document.getElementById('productModal').classList.remove('hidden');
         }
 
-        function editProduct(id) {
+        async function editProduct(id) {
             const p = allProducts.find(x => x.id === id);
             if (!p) return;
-            const name = prompt('Edit name:', p.name);
-            if (!name) return;
-            const qty = parseInt(prompt('Edit quantity:', p.quantity));
-            if (isNaN(qty)) return;
-            const price = parseFloat(prompt('Edit price:', p.price));
-            if (isNaN(price)) return;
-
-            api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
-                alert('Product updated!');
-                loadStock();
-            }).catch(e => alert('Error: ' + e.message));
+            
+            currentEditingId = id;
+            document.getElementById('modalTitle').textContent = 'Edit Product';
+            document.getElementById('modalSku').value = p.sku || '';
+            document.getElementById('modalName').value = p.name || '';
+            document.getElementById('modalQuantity').value = p.quantity || 0;
+            document.getElementById('modalPrice').value = p.price || 0;
+            document.getElementById('modalSku').disabled = true;
+            document.getElementById('skuError').classList.add('hidden');
+            
+            // Load categories
+            await loadCategories(p.category || 'Uncategorized');
+            
+            document.getElementById('productModal').classList.remove('hidden');
         }
 
         async function deleteProduct(id) {
@@ -858,6 +1302,62 @@
                 } catch (error) {
                     alert('Error: ' + error.message);
                 }
+            }
+        }
+
+        function closeProductModal() {
+            document.getElementById('productModal').classList.add('hidden');
+            document.getElementById('productForm').reset();
+            currentEditingId = null;
+        }
+
+        async function loadCategories(selected = 'Uncategorized') {
+            try {
+                const categories = await api.get('/api/categories');
+                const container = document.getElementById('categoryContainer');
+                container.innerHTML = `
+                    <select id="modalCategory" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white focus:outline-none focus:border-primary/50 transition" required>
+                        ${categories.map(cat => `<option value="${cat}" ${cat === selected ? 'selected' : ''}>${cat}</option>`).join('')}
+                    </select>
+                `;
+            } catch (error) {
+                console.error('Error loading categories:', error);
+            }
+        }
+
+        async function handleProductSubmit(event) {
+            event.preventDefault();
+            
+            const sku = document.getElementById('modalSku').value.trim();
+            const name = document.getElementById('modalName').value.trim();
+            const category = document.getElementById('modalCategory').value;
+            const quantity = parseInt(document.getElementById('modalQuantity').value);
+            const price = parseFloat(document.getElementById('modalPrice').value);
+            
+            if (!sku || !name) {
+                alert('SKU and Name are required');
+                return;
+            }
+            
+            if (isNaN(quantity) || isNaN(price)) {
+                alert('Quantity and Price must be valid numbers');
+                return;
+            }
+            
+            try {
+                if (currentEditingId) {
+                    await api.put(`/api/inventory/${currentEditingId}`, {
+                        name, category, quantity, price
+                    });
+                } else {
+                    await api.post('/api/inventory', {
+                        sku, name, category, quantity, price
+                    });
+                }
+                closeProductModal();
+                loadStock();
+            } catch (error) {
+                alert('Error: ' + error.message);
             }
         }
 
@@ -1316,37 +1816,94 @@
                     }
                 }
 
-                function showAddProductModal() {
-                    const sku = prompt('Enter SKU:');
-                    if (!sku) return;
-                    const name = prompt('Enter Product Name:');
-                    if (!name) return;
-                    const qty = parseInt(prompt('Enter Quantity:'));
-                    if (isNaN(qty)) return;
-                    const price = parseFloat(prompt('Enter Price:'));
-                    if (isNaN(price)) return;
+                let currentEditingId = null;
 
-                    api.post('/api/inventory', {sku, name, quantity: qty, price}).then(() => {
-                        alert('Product added!');
-                        if (currentView === 'dashboard') loadDashboard();
-                        if (currentView === 'stock') loadStock();
-                    }).catch(e => alert('Error: ' + e.message));
+                async function showAddProductModal() {
+                    currentEditingId = null;
+                    document.getElementById('modalTitle').textContent = 'Add Product';
+                    document.getElementById('productForm').reset();
+                    document.getElementById('modalSku').disabled = false;
+                    document.getElementById('skuError').classList.add('hidden');
+                    
+                    // Load categories
+                    await loadCategories();
+                    
+                    document.getElementById('productModal').classList.remove('hidden');
                 }
 
-                function editProduct(id) {
+                async function editProduct(id) {
                     const p = allProducts.find(x => x.id === id);
                     if (!p) return;
-                    const name = prompt('Edit name:', p.name);
-                    if (!name) return;
-                    const qty = parseInt(prompt('Edit quantity:', p.quantity));
-                    if (isNaN(qty)) return;
-                    const price = parseFloat(prompt('Edit price:', p.price));
-                    if (isNaN(price)) return;
+                    
+                    currentEditingId = id;
+                    document.getElementById('modalTitle').textContent = 'Edit Product';
+                    document.getElementById('modalSku').value = p.sku || '';
+                    document.getElementById('modalName').value = p.name || '';
+                    document.getElementById('modalQuantity').value = p.quantity || 0;
+                    document.getElementById('modalPrice').value = p.price || 0;
+                    document.getElementById('modalSku').disabled = true;
+                    document.getElementById('skuError').classList.add('hidden');
+                    
+                    // Load categories
+                    await loadCategories(p.category || 'Uncategorized');
+                    
+                    document.getElementById('productModal').classList.remove('hidden');
+                }
 
-                    api.put(`/api/inventory/${id}`, {name, quantity: qty, price, category: p.category}).then(() => {
-                        alert('Product updated!');
+                function closeProductModal() {
+                    document.getElementById('productModal').classList.add('hidden');
+                    document.getElementById('productForm').reset();
+                    currentEditingId = null;
+                }
+
+                async function loadCategories(selected = 'Uncategorized') {
+                    try {
+                        const categories = await api.get('/api/categories');
+                        const container = document.getElementById('categoryContainer');
+                        container.innerHTML = `
+                            <select id="modalCategory" class="w-full px-4 py-3 bg-navy-800/50 border border-white/10 rounded-xl text-white focus:outline-none focus:border-primary/50 transition" required>
+                                ${categories.map(cat => `<option value="${cat}" ${cat === selected ? 'selected' : ''}>${cat}</option>`).join('')}
+                            </select>
+                        `;
+                    } catch (error) {
+                        console.error('Error loading categories:', error);
+                    }
+                }
+
+                async function handleProductSubmit(event) {
+                    event.preventDefault();
+                    
+                    const sku = document.getElementById('modalSku').value.trim();
+                    const name = document.getElementById('modalName').value.trim();
+                    const category = document.getElementById('modalCategory').value;
+                    const quantity = parseInt(document.getElementById('modalQuantity').value);
+                    const price = parseFloat(document.getElementById('modalPrice').value);
+                    
+                    if (!sku || !name) {
+                        alert('SKU and Name are required');
+                        return;
+                    }
+                    
+                    if (isNaN(quantity) || isNaN(price)) {
+                        alert('Quantity and Price must be valid numbers');
+                        return;
+                    }
+                    
+                    try {
+                        if (currentEditingId) {
+                            await api.put(`/api/inventory/${currentEditingId}`, {
+                                name, category, quantity, price
+                            });
+                        } else {
+                            await api.post('/api/inventory', {
+                                sku, name, category, quantity, price
+                            });
+                        }
+                        closeProductModal();
                         loadStock();
-                    }).catch(e => alert('Error: ' + e.message));
+                    } catch (error) {
+                        alert('Error: ' + error.message);
+                    }
                 }
 
                 async function deleteProduct(id) {
